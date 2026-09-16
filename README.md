@@ -81,9 +81,19 @@ DIALibraryRefiner \
   -out_report residuals.tsv
 ```
 
-`-ids` accepts a DIA-NN `report.parquet` or a DIA-NN empirical library
-(`--gen-spec-lib` output). `-write_im` adds the mobility replacement;
-`-no_filter` turns the filter off as a declared arm.
+`-ids` accepts a DIA-NN `report.parquet`. Every enabled q-value gate must find
+its column there, or the tool refuses — nothing fails open. To refine against a
+DIA-NN *empirical library* (`--gen-spec-lib` output, already filtered, no
+`Global.Q.Value`), pass `-empirical_library`: missing gates are then bypassed
+and each bypass is recorded in the output's provenance. `-write_im` adds the
+mobility replacement for charges ≥ `-im_min_charge` (default 2; z1 is censored
+at the ramp top); `-im_ramp_top` declares the instrument's ramp limit so
+observations at the edge are treated as censored; `-no_filter` turns the filter
+off as a declared arm.
+
+Every run writes `<out>.refine.json` — the recipe, input content hashes, the
+reference run, every rejection count, and the pre-overwrite residuals — and a
+Parquet output carries the same JSON in its schema metadata (`odia.config_json`).
 
 ### Modification naming is canonicalised, and this is load-bearing
 

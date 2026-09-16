@@ -37,6 +37,18 @@ int main()
   check(canonicalModifiedSequence("AC(+57.0215)DEK") != canonicalModifiedSequence("AC(UniMod:4)DEK"),
         "an unnamed mass shift must not be assumed to be carbamidomethyl");
 
+  // Nested brackets are one token (review M12): the first implementation stopped
+  // at the first ')' and K(Label:13C(6)15N(2)) could never match its accession.
+  check(canonicalModifiedSequence("PEPTIDEK(Label:13C(6)15N(2))") == canonicalModifiedSequence("PEPTIDEK(UniMod:259)"),
+        "nested isotope-label token must canonicalise whole");
+  check(canonicalModifiedSequence("PEPTIDEK(Label:13C(6)15N(2))") == "PEPTIDEK(UniMod:259)",
+        "and to the accession form");
+
+  // Unknown tokens are counted, known ones are not.
+  std::size_t unknown = 0;
+  canonicalModifiedSequence("AC(Carbamidomethyl)DM(Oxidation)K(Foo)R", &unknown);
+  check(unknown == 1, "exactly the unknown token is counted");
+
   if (failures == 0) { std::cout << "canonical_modseq: all checks passed\n"; }
   return failures == 0 ? 0 : 1;
 }
