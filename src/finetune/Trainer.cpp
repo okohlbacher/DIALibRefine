@@ -475,6 +475,7 @@ namespace ODIA::tune
     }
     else if (p.device != "cpu") { throw std::runtime_error("unknown device " + p.device); }
     if (dev.is_cpu()) { torch::set_num_threads(std::max(1, p.threads)); }
+    if (const char* e = std::getenv("DLR_NO_MKLDNN"); e && *e && *e != '0') { at::globalContext().setUserEnabledMkldnn(false); log << "oneDNN disabled (DLR_NO_MKLDNN)\n"; }
     // pytorch.org's CUDA zips ship only cuDNN's loader shim; without the sub-
     // libraries on the library path cudnnCreate aborts the process (not an
     // exception). The native kernels are slower but always there.

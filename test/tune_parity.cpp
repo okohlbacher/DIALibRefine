@@ -125,6 +125,8 @@ int main(int argc, char** argv)
 {
   if (argc != 3) { std::cerr << "usage: tune_parity <rt.onnx> <ccs.onnx>\n"; return 2; }
   torch::set_num_threads(1);
+  // Diagnostics: DLR_NO_MKLDNN=1 routes conv/LSTM away from oneDNN.
+  if (const char* e = std::getenv("DLR_NO_MKLDNN"); e && *e && *e != '0') { at::globalContext().setUserEnabledMkldnn(false); std::cout << "  (oneDNN disabled)\n"; }
   try
   {
     parity(argv[1], false);

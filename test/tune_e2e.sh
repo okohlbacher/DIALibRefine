@@ -19,7 +19,7 @@ for head in rt ccs; do
   model="$MODELS/peptdeep_${head}_dynamic.onnx"
   [ -s "$model" ] || fail "no stock model $model"
   extra=(); [ "$head" = rt ] && extra=(-filter:rt_max_minutes 30)
-  "$BIN" -in "$TMP/report.parquet" -model_in "$model" -out "$TMP/$head.onnx" -head "$head" "${extra[@]}" \
+  "$BIN" -in "$TMP/report.parquet" -model_in "$model" -out "$TMP/$head.onnx" -head "$head" ${extra[@]+"${extra[@]}"} \
      -train:epochs 20 -train:warmup 2 -stop:min_epochs 20 -stop:patience 100 -machine:threads 2 > "$TMP/$head.log" 2>&1 \
      || { cat "$TMP/$head.log" >&2; fail "$head: DIALibTune exited non-zero"; }
   [ -s "$TMP/$head.onnx" ] || fail "$head: no ONNX written"

@@ -136,12 +136,29 @@ jobs:
         shell: bash -el {0}
         run: |
           set -euo pipefail
-          ctest --test-dir build --output-on-failure
           # A test that is never ADDED does not fail -- it disappears.
           for t in tune_parity tune_e2e standalone; do
             ctest --test-dir build -N | grep -q "$t" \
               || { echo "::error::test $t was not registered"; exit 1; }
           done
+          if ctest --test-dir build --output-on-failure; then exit 0; fi
+          # The libtorch forward is the one thing that differs per platform
+          # (BLAS, OpenMP runtime, oneDNN). Say which libraries are loaded and
+          # whether the parity test passes without threads / without oneDNN.
+          echo "::group::diagnostics"
+          P=build/test/dlr_tune_parity; M="$PWD/models"
+          if [ "$RUNNER_OS" = macOS ]; then otool -L "$P" | grep -iE "omp|blas|mkl|torch|onnx|c10" || true
+          else ldd "$P" | grep -iE "omp|blas|mkl|torch|onnx|c10|dnnl" || true; fi
+          for e in "OMP_NUM_THREADS=1" "DLR_NO_MKLDNN=1" "OMP_NUM_THREADS=1 DLR_NO_MKLDNN=1"; do
+            echo "--- parity with $e"
+            env $e "$P" "$M/peptdeep_rt_dynamic.onnx" "$M/peptdeep_ccs_dynamic.onnx" 2>&1 | grep -E "parity|PASSED|FAILED|oneDNN" || echo "(crashed or no output)"
+          done
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get install -y -q gdb > /dev/null 2>&1 || true
+            gdb -batch -ex run -ex bt --args "$P" "$M/peptdeep_rt_dynamic.onnx" "$M/peptdeep_ccs_dynamic.onnx" 2>&1 | tail -40 || true
+          fi
+          echo "::endgroup::"
+          exit 1
 
       - name: Install
         shell: bash -el {0}
