@@ -24,6 +24,8 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <unistd.h>
 #include <fstream>
 #include <map>
 #include <numeric>
@@ -348,7 +350,9 @@ namespace ODIA::tune
         if (ccs) { by_z[u.charge].push_back(p - u.observed); }
       }
       Metrics m; m.n = obs.size(); m.nonfinite_predictions = nonfinite;
-      if (m.n < 3) { return m; }
+      // A NaN prediction is a broken model, not a missing row: it must not
+      // leave the metric looking better by its absence.
+      if (m.n < 3 || nonfinite > 0) { return m; }
       std::vector<double> r(m.n), ar(m.n);
       double ss = 0;
       for (std::size_t i = 0; i < m.n; ++i) { r[i] = dep[i] - obs[i]; ar[i] = std::fabs(r[i]); ss += r[i] * r[i]; }
@@ -373,7 +377,12 @@ namespace ODIA::tune
       std::vector<double> cr(m.n);
       for (std::size_t i = 0; i < m.n; ++i) { cr[i] = obs[i] - (m.cal_slope * dep[i] + m.cal_intercept); }
       m.calibrated_sd = sd(cr);
-      for (auto& [zc, v] : by_z) { if (v.size() >= 30) { m.sd_by_charge[zc] = sd(v); m.n_by_charge[zc] = v.size(); } }
+      for (auto& [zc, v] : by_z)
+      {
+        if (v.size() < 30) { continue; }
+        m.sd_by_charge[zc] = sd(v); m.n_by_charge[zc] = v.size();
+        m.mean_by_charge[zc] = std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
+      }
       return m;
     }
 
@@ -382,7 +391,7 @@ namespace ODIA::tune
       auto f = [](double x) { return std::isfinite(x) ? nlohmann::json(x) : nlohmann::json(nullptr); };
       nlohmann::json j = {{"n", m.n}, {"nonfinite_predictions", m.nonfinite_predictions}, {"rmse", f(m.rmse)}, {"sd", f(m.sd)}, {"mean_err", f(m.mean_err)}, {"p95", f(m.p95)},
                           {"calibrated_sd", f(m.calibrated_sd)}, {"cal_slope", f(m.cal_slope)}, {"cal_intercept", f(m.cal_intercept)}};
-      for (auto& [z, s] : m.sd_by_charge) { j["by_charge"][std::to_string(z)] = {{"n", m.n_by_charge.at(z)}, {"sd", f(s)}}; }
+      for (auto& [z, s] : m.sd_by_charge) { j["by_charge"][std::to_string(z)] = {{"n", m.n_by_charge.at(z)}, {"sd", f(s)}, {"mean_err", f(m.mean_by_charge.at(z))}}; }
       return j;
     }
 
@@ -394,6 +403,19 @@ namespace ODIA::tune
       if (horizon <= warmup) { return 1.0; }
       const double t = static_cast<double>(epoch - warmup) / static_cast<double>(horizon - warmup);
       return std::max(1e-10, 0.5 * (1.0 + std::cos(M_PI * t)));
+    }
+
+    /// torch.nn.utils.clip_grad_norm_ (max_norm, L2), computed entirely on the
+    /// device: libtorch's own returns the norm as a host double, which is a
+    /// synchronisation on every step.
+    void clipGradNorm(const std::vector<torch::Tensor>& params, double max_norm)
+    {
+      std::vector<torch::Tensor> norms;
+      for (const auto& p : params) { if (p.grad().defined()) { norms.push_back(p.grad().norm()); } }
+      if (norms.empty()) { return; }
+      auto total = torch::stack(norms).norm();
+      auto coef = torch::clamp_max(max_norm / (total + 1e-6), 1.0);
+      for (auto& p : params) { if (p.grad().defined()) { p.grad().mul_(coef); } }
     }
 
     std::vector<torch::Tensor> snapshot(Head& model)
@@ -419,7 +441,10 @@ namespace ODIA::tune
 
     void writeAtomically(const std::string& path, const std::function<void(const std::string&)>& write)
     {
-      const std::string part = path + ".part";
+      // A unique scratch name: "<out>.part" could be the input, or a symlink to it.
+      const std::string part = path + ".tmp-" + std::to_string(static_cast<long>(::getpid()));
+      std::error_code ec0;
+      if (std::filesystem::exists(part, ec0)) { throw std::runtime_error("scratch file already exists: " + part); }
       write(part);
       std::error_code ec;
       std::filesystem::rename(part, path, ec);
@@ -430,7 +455,11 @@ namespace ODIA::tune
   TuneResult finetune(const TuneParams& p, std::ostream& log)
   {
     const bool ccs = p.head == HeadKind::CCS;
-    if (p.model_out == p.model_in) { throw std::runtime_error("-out must not be the stock model itself"); }
+    {
+      std::error_code ec;
+      const auto a = std::filesystem::weakly_canonical(p.model_in, ec), b = std::filesystem::weakly_canonical(p.model_out, ec);
+      if (p.model_out == p.model_in || (!ec && a == b)) { throw std::runtime_error("-out must not be the stock model itself"); }
+    }
     if (p.rel_tol < 0 || p.abs_tol < 0) { throw std::runtime_error("tolerances must be >= 0"); }
     if (p.train_frac < 0 || p.train_frac > 1) { throw std::runtime_error("train_frac must be in [0, 1]"); }
     if (ccs && p.min_charge < 2 && !p.allow_z1) { throw std::runtime_error("charge 1 is censored at the mobility ramp top on timsTOF; pass -filter:allow_z1 to train CCS on it anyway"); }
@@ -480,7 +509,7 @@ namespace ODIA::tune
     std::shuffle(pool.begin(), pool.end(), rng);
     std::size_t n_train = pool.size();
     if (p.train_size) { n_train = std::min(n_train, p.train_size); }
-    else if (p.train_frac > 0) { n_train = std::min(n_train, std::max<std::size_t>(1, static_cast<std::size_t>(std::lround(p.train_frac * static_cast<double>(pool.size()))))); }
+    else if (p.train_frac > 0) { n_train = std::min(n_train, std::max<std::size_t>(1, static_cast<std::size_t>(std::nearbyint(p.train_frac * static_cast<double>(pool.size()))))); }
     if (n_train == 0) { throw std::runtime_error("training set is empty (pool " + std::to_string(pool.size()) + ")"); }
     for (std::size_t k = 0; k < n_train; ++k) { d.units[pool[k]].training = true; }
     res.training = n_train;
@@ -526,9 +555,11 @@ namespace ODIA::tune
 
     // Selection starts from the STOCK model: a checkpoint is exported only if
     // it beat stock on validation. The anchor-patience rule is the reference
-    // tool's: progress = beating the anchor by max(abs_tol, rel_tol * anchor);
-    // patience counts EPOCHS since the last progress; never inside warmup.
-    double best = stock_metric, anchor = stock_metric;
+    // tool's: the anchor is the first trained checkpoint (NOT stock -- a run
+    // that degrades first and recovers must not be stopped for it), progress
+    // = beating the anchor by max(abs_tol, rel_tol * anchor); patience counts
+    // EPOCHS since the last progress; never inside warmup.
+    double best = stock_metric, anchor = NAN;   // anchor: the first trained checkpoint, as the reference does
     int anchor_epoch = 0;
     std::vector<torch::Tensor> best_state = stock;
     res.best_epoch = 0;
@@ -559,13 +590,14 @@ namespace ODIA::tune
           auto y = model->forward(b.aa.index_select(0, idx), b.mod_x.index_select(0, idx), b.charges.index_select(0, idx));
           auto loss = torch::l1_loss(y, b.target.index_select(0, idx));
           loss.backward();
-          torch::nn::utils::clip_grad_norm_(params, 1.0);
+          clipGradNorm(params, 1.0);
           opt.step();
           ++res.updates;
           loss_sum += loss.detach().to(torch::kFloat64) * static_cast<double>(idx.size(0));   // no host sync per step
           loss_n += static_cast<std::size_t>(idx.size(0));
         }
       }
+      if (dev.is_cuda()) { torch::cuda::synchronize(); }   // the timer must include the queued kernels
       res.train_seconds += seconds(t0);
       res.epochs_run = epoch + 1;
       const double train_loss = loss_n ? loss_sum.item<double>() / static_cast<double>(loss_n) : NAN;
@@ -586,7 +618,7 @@ namespace ODIA::tune
         const double m = selected(vm, p.select);
         if (!std::isfinite(m)) { throw std::runtime_error("non-finite validation metric at epoch " + std::to_string(epoch + 1)); }
         if (m < best) { best = m; res.best_epoch = epoch + 1; best_state = snapshot(model); is_best = true; }
-        if (anchor - m >= std::max(p.abs_tol, p.rel_tol * anchor)) { anchor = m; anchor_epoch = epoch + 1; }
+        if (!std::isfinite(anchor) || anchor - m >= std::max(p.abs_tol, p.rel_tol * anchor)) { anchor = m; anchor_epoch = epoch + 1; }
         if (epoch + 1 >= no_stop_before && epoch + 1 - anchor_epoch >= p.patience)
         { stop = "patience (" + std::to_string(epoch + 1 - anchor_epoch) + " epochs without progress of max(" + std::to_string(p.abs_tol) + ", " + std::to_string(100 * p.rel_tol) + "% of the anchor))"; }
       }
@@ -604,6 +636,8 @@ namespace ODIA::tune
       if (!stop.empty()) { break; }
     }
     res.stop_reason = stop;
+    traj.close();
+    if (!traj) { throw std::runtime_error("cannot write " + p.model_out + ".trajectory.tsv"); }
     if (res.updates == 0) { throw std::runtime_error("no optimizer step was taken -- training set empty after length grouping?"); }
 
     // restore the best checkpoint, evaluate, write back

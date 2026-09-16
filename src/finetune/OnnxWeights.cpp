@@ -34,6 +34,7 @@ namespace ODIA::tune
         while (pos < end)
         {
           const std::uint64_t key = varint(pos);
+          if (pos > end) { throw std::runtime_error("malformed ONNX (field key runs past its message)"); }
           const int field = static_cast<int>(key >> 3), wt = static_cast<int>(key & 7);
           if (wt == 0) { const std::uint64_t v = varint(pos); cb(field, wt, v, 0, 0); }
           else if (wt == 1) { if (end - pos < 8) { throw std::runtime_error("truncated ONNX (fixed64)"); } cb(field, wt, 0, pos, 8); pos += 8; }
@@ -41,7 +42,7 @@ namespace ODIA::tune
           else if (wt == 2)
           {
             const std::uint64_t ln = varint(pos);
-            if (ln > end - pos) { throw std::runtime_error("truncated ONNX (length-delimited field runs past its message)"); }
+            if (pos > end || ln > end - pos) { throw std::runtime_error("truncated ONNX (length-delimited field runs past its message)"); }
             cb(field, wt, 0, pos, static_cast<std::size_t>(ln)); pos += static_cast<std::size_t>(ln);
           }
           else { throw std::runtime_error("ONNX: unsupported wire type"); }
@@ -105,6 +106,7 @@ namespace ODIA::tune
   {
     std::ofstream out(path, std::ios::binary);
     out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    out.close();
     if (!out) { throw std::runtime_error("cannot write " + path); }
   }
 

@@ -76,6 +76,7 @@ namespace ODIA::tune
     double calibrated_sd = NAN, cal_slope = NAN, cal_intercept = NAN;
     std::map<int, double> sd_by_charge;        ///< CCS only, groups of >= 30
     std::map<int, std::size_t> n_by_charge;
+    std::map<int, double> mean_by_charge;
   };
 
   struct TuneResult
