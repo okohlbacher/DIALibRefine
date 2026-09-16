@@ -120,9 +120,10 @@ protected:
 
     try
     {
-      // The stream object, not the OPENMS_LOG_INFO macro: on OpenMS 3.5 the
-      // macro carries an OpenMP _Pragma and is not an expression.
-      const TuneResult r = finetune(p, OpenMS_Log_info);
+      // std::cout, where OpenMS's info log goes anyway: the OPENMS_LOG_INFO
+      // macro is not an expression on OpenMS 3.5 (an OpenMP _Pragma) and the
+      // stream behind it is named differently on 3.5 and 3.6.
+      const TuneResult r = finetune(p, std::cout);
       writeLogInfo_("wrote " + r.model_out + "  (" + r.stop_reason + ", best epoch " + std::to_string(r.best_epoch)
                     + " of " + std::to_string(r.epochs_run) + ", " + std::to_string(r.updates) + " updates, " + std::to_string(r.train_seconds) + " s training)");
     }
