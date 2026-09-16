@@ -32,10 +32,11 @@ full pool is the default.
 
 **GPU or CPU?**
 Cost is optimizer steps, and this model is small: a full-pool, full-horizon
-RT run is ~3 700 steps. On a CPU that is ~16 minutes at 4 threads (C++) and
-the default stopping rule ends it around epoch 60–75. The GPU numbers are
-in [results.md](results.md#gpu). More CPU threads do not help — 4 was the
-fastest setting measured, 24–48 were several times slower.
+RT run is ~3 700 steps — 28 s on an H100, 10.5 min on 8 CPU threads of the
+same machine, and the default stopping rule ends it around epoch 60–75
+([results.md](results.md#gpu)). More CPU threads do not help much — 4 was
+the fastest setting measured on the sweep node, 24–48 were several times
+slower.
 
 **Does `DIALibTune` need Python?**
 No. It is C++ with libtorch; the Python tools under `tools/` are the
