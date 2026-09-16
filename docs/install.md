@@ -14,7 +14,11 @@ macOS — a tarball cannot carry a notarization ticket, and Gatekeeper then
 inspects every library on first launch.
 
 `DIALibTune` in these bundles is the **CPU** build (libtorch from conda-forge).
-A CUDA build is not released; see below.
+A CUDA build is not released; see below. **The linux-arm64 bundle has no
+`DIALibTune`**: conda-forge's aarch64 libtorch 2.10.0 crashes inside its own
+LSTM dispatcher and newer versions do not co-install with OpenMS 3.5; on
+arm64 Linux build it from source against the libtorch inside the pip `torch`
+wheel (`DLR_LIBTORCH_DIR=<site-packages>/torch`).
 
 ## From source
 
@@ -28,7 +32,11 @@ Requirements:
 - for `DIALibTune`: libtorch, **CXX11 ABI** (the conda-forge `libtorch`
   package, or pytorch.org's `libtorch-shared-with-deps` zip, which has been
   CXX11 since 2.6). The pre-CXX11 zip cannot link against OpenMS and Arrow and
-  is refused at configure time.
+  is refused at configure time. Two conda combinations are known bad and CI
+  avoids them: on osx-64 the `cpu_mkl` build (conda's MKL 2023.2 pairing
+  computes wrong numbers — take `cpu_generic` with OpenBLAS), and on
+  linux-aarch64 every `cpu_generic` build up to 2.10.0 (segfault in the LSTM
+  dispatcher). The parity test catches both.
 
 [DIALibGen](https://github.com/okohlbacher/DIALibGen) is fetched at the pinned
 tag (`DLR_DIALIBGEN_TAG`, v0.10.0) unless an installed one is found.

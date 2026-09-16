@@ -43,13 +43,16 @@ jobs:
           # libomp) computes wrong numbers -- parity vs ONNX Runtime off by 0.25
           # rt_norm, single-threaded and without oneDNN alike. cpu_generic on
           # OpenBLAS is exact there.
-          - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu*",         extra: "" }
-          # linux-arm64: conda-forge's 2.10.0 cpu_generic build segfaults inside
-          # its own LSTM dispatcher (at::_ops::lstm_input::call), single-threaded
-          # and without oneDNN alike; 2.11.0 is the next build to try.
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, torch: "libtorch=2.11.0=cpu*",         extra: "" }
-          - { name: macos-arm64, runner: macos-14,         torch: "libtorch=2.10.0=cpu*",         extra: "llvm-openmp" }
-          - { name: macos-x64,   runner: macos-15-intel,   torch: "libtorch=2.10.0=cpu_generic*", extra: "llvm-openmp libblas=*=*openblas" }
+          - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu*",         extra: "", finetune: "ON" }
+          # linux-arm64 ships WITHOUT the fine-tuner: conda-forge's aarch64
+          # libtorch 2.10.0 (cpu_generic) segfaults inside its own LSTM dispatcher
+          # (at::_ops::lstm_input::call), single-threaded and without oneDNN
+          # alike, and 2.11+ do not co-install with openms 3.5.0 (abseil, icu).
+          # pytorch.org has no aarch64 zip. Build from source there with the pip
+          # wheel's libtorch through DLR_LIBTORCH_DIR (docs/install.md).
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, torch: "",                             extra: "", finetune: "OFF" }
+          - { name: macos-arm64, runner: macos-14,         torch: "libtorch=2.10.0=cpu*",         extra: "llvm-openmp", finetune: "ON" }
+          - { name: macos-x64,   runner: macos-15-intel,   torch: "libtorch=2.10.0=cpu_generic*", extra: "llvm-openmp libblas=*=*openblas", finetune: "ON" }
 
     steps:
       - uses: actions/checkout@v5
@@ -132,7 +135,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
             -DQT_HOST_PATH="$CONDA_PREFIX" \
-            -DDLR_BUILD_FINETUNE=ON \
+            -DDLR_BUILD_FINETUNE=${{ matrix.finetune }} \
             -DTorch_DIR="$CONDA_PREFIX/share/cmake/Torch" \
             -DDLR_PEPTDEEP_ONNX_DIR="$PWD/models" \
             -DCMAKE_INSTALL_PREFIX="$PWD/stage"
@@ -146,7 +149,8 @@ jobs:
         run: |
           set -euo pipefail
           # A test that is never ADDED does not fail -- it disappears.
-          for t in tune_parity tune_e2e standalone; do
+          want="standalone"; [ "${{ matrix.finetune }}" = ON ] && want="$want tune_parity tune_e2e"
+          for t in $want; do
             ctest --test-dir build -N | grep -q "$t" \
               || { echo "::error::test $t was not registered"; exit 1; }
           done
@@ -184,11 +188,12 @@ jobs:
         shell: bash -el {0}
         run: |
           set -euo pipefail
-          test -x stage/bin/DIALibraryRefiner && test -x stage/bin/DIALibTune
+          test -x stage/bin/DIALibraryRefiner
+          TUNE=""; if [ "${{ matrix.finetune }}" = ON ]; then test -x stage/bin/DIALibTune; TUNE=stage/bin/DIALibTune; fi
           export OPENMS_DATA_PATH="$CONDA_PREFIX/share/OpenMS"
           export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib"
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
-          bash test/standalone_test.sh stage/bin/DIALibraryRefiner stage/bin/DIALibTune \
+          bash test/standalone_test.sh stage/bin/DIALibraryRefiner "$TUNE" \
             "$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 
       # ---------------------------------------------------------------------
@@ -275,7 +280,7 @@ jobs:
           set -euo pipefail
           mkdir -p stage/lib stage/share/OpenMS
           cp -R "$CONDA_PREFIX/share/OpenMS/." stage/share/OpenMS/
-          BINS="stage/bin/DIALibraryRefiner stage/bin/DIALibTune"
+          BINS="stage/bin/DIALibraryRefiner"; [ "${{ matrix.finetune }}" = ON ] && BINS="$BINS stage/bin/DIALibTune"
           if [ "$RUNNER_OS" = "macOS" ]; then
             copy_closure() {
               otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do
@@ -340,10 +345,12 @@ jobs:
           test -s stage/share/OpenMS/CHEMISTRY/unimod.xml
           # --help loads no model. The claim the archive makes is that it
           # fine-tunes: run the bounded e2e from the bare tree.
-          env -i HOME="$HOME" PATH="$CONDA_PREFIX/bin:/usr/bin:/bin" \
-            bash test/tune_e2e.sh "$PWD/stage/bin/DIALibTune" "$PWD/models" \
-              - "$CONDA_PREFIX/bin/python" \
-            || { echo "::error::the staged bundle cannot fine-tune"; exit 1; }
+          if [ "${{ matrix.finetune }}" = ON ]; then
+            env -i HOME="$HOME" PATH="$CONDA_PREFIX/bin:/usr/bin:/bin" \
+              bash test/tune_e2e.sh "$PWD/stage/bin/DIALibTune" "$PWD/models" \
+                - "$CONDA_PREFIX/bin/python" \
+              || { echo "::error::the staged bundle cannot fine-tune"; exit 1; }
+          fi
           echo "portable bundle ok: $(find stage/lib -name '*.so*' -o -name '*.dylib' | wc -l) libraries"
 
       - name: Package the CLI
