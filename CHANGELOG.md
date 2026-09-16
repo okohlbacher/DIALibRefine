@@ -13,6 +13,13 @@ observed RT + observed 1/K0) against a reference run's identifications.
 - Per-axis residual reporting, measured BEFORE the overwrite.
 - Refusal of `-write_intensity`, which the source paper measures as a wash.
 
+### Added (fine-tuning stage, tools/)
+- `finetune_rt.py` with `--holdout protein`, `finetune_ccs.py` (new — first CCS
+  fine-tune in the project), `export_finetuned.sh`. Measured on S08: held-out RT
+  0.3035 min and 1/K0 0.01475 vs DIA-NN's own run-refit 0.3524 / 0.01480; a
+  full-proteome library from the tuned models gives DIA-NN +8% identifications at
+  matched entrapment budget on the same run. Same-run only; transfer unmeasured.
+
 ### Known limitations
 - Fragment intensity replacement is not implemented.
 - The output is a per-run object; nothing prevents it being copied elsewhere.

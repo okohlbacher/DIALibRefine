@@ -132,6 +132,46 @@ this: *"our approach may transfer false positives… FDR estimation to be more
 liberal"*. Any q-value headline measured with a reconstructed library is
 optimistic by construction. Compare at a matched entrapment budget.
 
+## Fine-tuning (`tools/`)
+
+The paper puts transfer learning *downstream* of reconstruction, trained on the
+reconstructed identifications. That stage lives here as scripts — torch stays
+out of the C++ tool:
+
+| script | does |
+|---|---|
+| `tools/finetune_rt.py` | fine-tune the AlphaPeptDeep RT head on a run's identifications; `--holdout protein` (a sequence split leaks co-eluting siblings) |
+| `tools/finetune_ccs.py` | the same for the CCS head — the first time it has been done in this project; guards peptdeep's silent no-op and excludes censored z1 |
+| `tools/export_finetuned.sh` | any head → the ONNX triplet DIALibGen consumes, with a manifest naming which checkpoint each file came from |
+
+Then point DIALibGen's `rt_model` / `ccs_model` at the exports and regenerate.
+
+**Measured on S08** (Bruker timsTOF diaPASEF, carbamidomethylated; models
+tuned on DIA-NN's own identifications of that run, 26k peptides, protein-level
+holdout). Library accuracy on precursors from proteins the models never saw:
+
+| | RT sd, monotone (min) | 1/K0 sd, z≥2 |
+|---|---|---|
+| DIA-NN raw library | 0.5065 | 0.01602 |
+| ODIA stock | 0.6875 | 0.01796 |
+| **ODIA fine-tuned** | **0.3035** | **0.01475** |
+| DIA-NN post-run-refit (in-sample) | 0.3524 | 0.01480 |
+
+And in a DIA-NN search of the same run, full-proteome libraries from the same
+FASTA and config, differing only in the two ONNX files:
+
+| | q≤0.01 | protein groups | entrapment FDP | at matched entrapment budget |
+|---|---|---|---|---|
+| DIA-NN library-free | 37,334 | 5,033 | 2.67% | — |
+| ODIA library, stock models | 35,805 | 4,907 | 2.34% | parity (±1%) |
+| **ODIA library, fine-tuned** | **39,440** | **5,228** | **2.45%** | **+8%** |
+
+The gain is not error inflation — entrapment FDP is measured and lower — and it
+is not a reordering: 5,932 precursors were found only with the fine-tuned
+library. **It is a same-run result.** The models were tuned on the run they are
+searching; cross-run transfer has not been measured. Treat the +8% as a per-run
+property until it has.
+
 ## Licence
 
 BSD-3-Clause. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
