@@ -79,13 +79,21 @@ namespace
 
   void parity(const std::string& path, bool ccs)
   {
+    // Stage markers, flushed: where a crash happens is the whole diagnosis on
+    // a platform that cannot be debugged interactively.
+    auto stage = [&](const char* what) { std::cout << "  ..   " << (ccs ? "ccs" : "rt") << ": " << what << std::endl; };
     const auto peps = peptides();
     std::vector<int> charges; for (std::size_t i = 0; i < peps.size(); ++i) { charges.push_back(2 + static_cast<int>(i % 3)); }
+    stage("reading the ONNX");
     OnnxFile f = OnnxFile::read(path);
+    stage("building the libtorch model");
     Head model(ccs);
+    stage("loading the weights");
     const std::size_t n = loadWeights(f, model);
     check(n == 21, std::string(ccs ? "ccs" : "rt") + ": 21 initializers loaded (" + std::to_string(n) + ")");
+    stage("libtorch forward");
     auto ours = torchPredict(model, peps, charges);
+    stage("ONNX Runtime forward");
     PeptDeepPredictor ort(path, /*prefer_gpu=*/false, /*intra_op_threads=*/1);
     auto ref = ccs ? ort.predictCCS(peps, charges) : ort.predictRT(peps);
     const double d = maxAbsDiff(ours, ref);

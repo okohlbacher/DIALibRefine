@@ -37,10 +37,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64,   runner: ubuntu-24.04,     extra: "" }
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, extra: "" }
-          - { name: macos-arm64, runner: macos-14,         extra: "llvm-openmp" }
-          - { name: macos-x64,   runner: macos-15-intel,   extra: "llvm-openmp" }
+          # `torch` is the libtorch build to solve. macos-x64 must NOT take the
+          # cpu_mkl build: conda's osx-64 MKL is frozen at 2023.2 and the
+          # combination (libmkl_intel_ilp64 + libmkl_intel_thread under llvm's
+          # libomp) computes wrong numbers -- parity vs ONNX Runtime off by 0.25
+          # rt_norm, single-threaded and without oneDNN alike. cpu_generic on
+          # OpenBLAS is exact there.
+          - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu*",         extra: "" }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, torch: "libtorch=2.10.0=cpu*",         extra: "" }
+          - { name: macos-arm64, runner: macos-14,         torch: "libtorch=2.10.0=cpu*",         extra: "llvm-openmp" }
+          - { name: macos-x64,   runner: macos-15-intel,   torch: "libtorch=2.10.0=cpu_generic*", extra: "llvm-openmp libblas=*=*openblas" }
 
     steps:
       - uses: actions/checkout@v5
@@ -58,7 +64,7 @@ jobs:
           create-args: >-
             openms=3.5.0
             onnxruntime-cpp
-            libtorch=2.10.0=cpu*
+            ${{ matrix.torch }}
             libparquet
             libarrow-dataset
             libarrow-acero
@@ -141,7 +147,11 @@ jobs:
             ctest --test-dir build -N | grep -q "$t" \
               || { echo "::error::test $t was not registered"; exit 1; }
           done
-          if ctest --test-dir build --output-on-failure; then exit 0; fi
+          # No `exit 0` on the success path: inside micromamba's login shell
+          # an explicit exit reported 1 with every test green.
+          if ctest --test-dir build --output-on-failure; then
+            echo "all tests passed"
+          else
           # The libtorch forward is the one thing that differs per platform
           # (BLAS, OpenMP runtime, oneDNN). Say which libraries are loaded and
           # whether the parity test passes without threads / without oneDNN.
@@ -154,11 +164,12 @@ jobs:
             env $e "$P" "$M/peptdeep_rt_dynamic.onnx" "$M/peptdeep_ccs_dynamic.onnx" 2>&1 | grep -E "parity|PASSED|FAILED|oneDNN" || echo "(crashed or no output)"
           done
           if [ "$RUNNER_OS" = Linux ]; then
-            sudo apt-get install -y -q gdb > /dev/null 2>&1 || true
-            gdb -batch -ex run -ex bt --args "$P" "$M/peptdeep_rt_dynamic.onnx" "$M/peptdeep_ccs_dynamic.onnx" 2>&1 | tail -40 || true
+            (sudo apt-get update -q && sudo apt-get install -y -q gdb) > /dev/null 2>&1 || echo "gdb install failed"
+            gdb -batch -ex run -ex bt --args "$P" "$M/peptdeep_rt_dynamic.onnx" "$M/peptdeep_ccs_dynamic.onnx" 2>&1 | tail -60 || true
           fi
           echo "::endgroup::"
-          exit 1
+          false
+          fi
 
       - name: Install
         shell: bash -el {0}
