@@ -44,7 +44,10 @@ jobs:
           # rt_norm, single-threaded and without oneDNN alike. cpu_generic on
           # OpenBLAS is exact there.
           - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu*",         extra: "" }
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, torch: "libtorch=2.10.0=cpu*",         extra: "" }
+          # linux-arm64: conda-forge's 2.10.0 cpu_generic build segfaults inside
+          # its own LSTM dispatcher (at::_ops::lstm_input::call), single-threaded
+          # and without oneDNN alike; 2.11.0 is the next build to try.
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, torch: "libtorch=2.11.0=cpu*",         extra: "" }
           - { name: macos-arm64, runner: macos-14,         torch: "libtorch=2.10.0=cpu*",         extra: "llvm-openmp" }
           - { name: macos-x64,   runner: macos-15-intel,   torch: "libtorch=2.10.0=cpu_generic*", extra: "llvm-openmp libblas=*=*openblas" }
 
