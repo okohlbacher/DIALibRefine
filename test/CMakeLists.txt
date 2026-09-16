@@ -27,3 +27,24 @@ if(TARGET DIALibraryRefiner)
            COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
   set_tests_properties(write_intensity_is_refused PROPERTIES WILL_FAIL TRUE)
 endif()
+
+# The fine-tuner rests on two things that are checked against the stock ONNX
+# models: the libtorch transcription predicts what ONNX Runtime predicts, and
+# load -> store is byte-identical. Needs the stock models: point
+# DLR_PEPTDEEP_ONNX_DIR at a directory holding peptdeep_rt_dynamic.onnx and
+# peptdeep_ccs_dynamic.onnx (DIALibGen ships them in its share directory).
+if(TARGET odia_tune)
+  add_executable(dlr_tune_parity tune_parity.cpp)
+  target_link_libraries(dlr_tune_parity PRIVATE odia_tune)
+  set(DLR_PEPTDEEP_ONNX_DIR "" CACHE PATH "Directory with the stock peptdeep_{rt,ccs}_dynamic.onnx for the parity test")
+  if(EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx" AND EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_ccs_dynamic.onnx")
+    add_test(NAME tune_parity COMMAND dlr_tune_parity
+             "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx"
+             "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_ccs_dynamic.onnx")
+  else()
+    message(STATUS "tune_parity test not registered: set DLR_PEPTDEEP_ONNX_DIR to the stock models")
+  endif()
+  if(TARGET DIALibTune)
+    add_test(NAME DIALibTune_help COMMAND DIALibTune --help)
+  endif()
+endif()

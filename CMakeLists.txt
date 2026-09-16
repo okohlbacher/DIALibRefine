@@ -38,26 +38,26 @@ include(GNUInstallDirs)
 # reads a library and a RESULTS TABLE, never the raw run -- which is what keeps
 # it the same shape as DIALibGen rather than ODIA with a different main().
 # ---------------------------------------------------------------------------
-set(DLR_DIALIBGEN_TAG "main" CACHE STRING
+set(DLR_DIALIBGEN_TAG "v0.10.0" CACHE STRING
     "Tag, branch or commit of DIALibGen to build against")
 
-find_package(DIALibraryGenerator QUIET)
-if(DIALibraryGenerator_FOUND)
-  message(STATUS "DIALibGen: ${DIALibraryGenerator_DIR} (installed)")
+find_package(DIALibGen QUIET)
+if(DIALibGen_FOUND)
+  message(STATUS "DIALibGen: ${DIALibGen_DIR} (installed)")
   if(DLR_IS_TOP_LEVEL)
     set(DLR_INSTALL ON CACHE BOOL "" FORCE)
   endif()
 else()
   include(FetchContent)
-  FetchContent_Declare(DIALibraryGenerator
+  FetchContent_Declare(DIALibGen
     GIT_REPOSITORY https://github.com/okohlbacher/DIALibGen.git
     GIT_TAG        ${DLR_DIALIBGEN_TAG}
     GIT_SHALLOW    TRUE)
   set(DIALIBGEN_BUILD_TOOL  OFF CACHE BOOL "" FORCE)
   set(DIALIBGEN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(DIALIBGEN_INSTALL     OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(DIALibraryGenerator)
-  message(STATUS "DIALibGen: ${dialibrarygenerator_SOURCE_DIR} (fetched, ${DLR_DIALIBGEN_TAG})")
+  FetchContent_MakeAvailable(DIALibGen)
+  message(STATUS "DIALibGen: ${dialibgen_SOURCE_DIR} (fetched, ${DLR_DIALIBGEN_TAG})")
 endif()
 
 find_package(nlohmann_json CONFIG QUIET)
@@ -77,7 +77,7 @@ add_library(DIALibRefine::odia_refine ALIAS odia_refine)
 target_include_directories(odia_refine PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_link_libraries(odia_refine PUBLIC DIALibraryGenerator::odia_library)
+target_link_libraries(odia_refine PUBLIC DIALibGen::odia_library)
 set_target_properties(odia_refine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(DLR_BUILD_TOOL)
@@ -86,12 +86,67 @@ if(DLR_BUILD_TOOL)
     odia_refine nlohmann_json::nlohmann_json)
 endif()
 
+# ---------------------------------------------------------------------------
+# Fine-tuning (optional). The RT and CCS models are re-trained on one run with
+# libtorch -- ONNX Runtime cannot train (its training API was deprecated at
+# 1.20) and the alternative was a Python dependency. The model is transcribed
+# from peptdeep, weights are loaded from and written back into the stock ONNX
+# file, so DIALibGen consumes the result unchanged.
+#
+# libtorch is found through find_package(Torch): point Torch_DIR (or
+# CMAKE_PREFIX_PATH) at <libtorch>/share/cmake/Torch. It must be the CXX11-ABI
+# build (pytorch.org's "libtorch-cxx11-abi-shared-with-deps" zip, or conda's
+# libtorch); the pre-cxx11 zip cannot link against OpenMS and Arrow and is
+# refused below rather than failing at link time with 300 undefined symbols.
+# ---------------------------------------------------------------------------
+option(DLR_BUILD_FINETUNE "Build DIALibTune and the fine-tuning library (needs libtorch)" OFF)
+if(DLR_BUILD_FINETUNE)
+  find_package(Torch REQUIRED)
+  string(FIND "${TORCH_CXX_FLAGS}" "_GLIBCXX_USE_CXX11_ABI=0" _dlr_pre_cxx11)
+  if(NOT _dlr_pre_cxx11 EQUAL -1)
+    message(FATAL_ERROR "libtorch at ${Torch_DIR} is the pre-CXX11-ABI build "
+                        "(_GLIBCXX_USE_CXX11_ABI=0); OpenMS and Arrow need the "
+                        "CXX11 ABI. Use the libtorch-cxx11-abi-shared-with-deps "
+                        "zip or a conda libtorch.")
+  endif()
+  message(STATUS "libtorch: ${Torch_DIR} (${Torch_VERSION}, CUDA: ${TORCH_CUDA_LIBRARIES})")
+
+  add_library(odia_tune STATIC
+    src/finetune/OnnxWeights.cpp
+    src/finetune/Trainer.cpp)
+  add_library(DIALibRefine::odia_tune ALIAS odia_tune)
+  target_include_directories(odia_tune PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(odia_tune PUBLIC
+    DIALibGen::odia_library ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json)
+  separate_arguments(_dlr_torch_flags UNIX_COMMAND "${TORCH_CXX_FLAGS}")
+  target_compile_options(odia_tune PUBLIC ${_dlr_torch_flags})
+  set_target_properties(odia_tune PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  if(DLR_BUILD_TOOL)
+    add_executable(DIALibTune src/DIALibTune.cpp)
+    target_link_libraries(DIALibTune PRIVATE odia_tune)
+    # A relocatable binary: libtorch's .so live next to it in ../lib when packaged.
+    set_target_properties(DIALibTune PROPERTIES
+      INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN"
+      BUILD_WITH_INSTALL_RPATH OFF)
+  endif()
+endif()
+
 if(DLR_INSTALL)
   include(CMakePackageConfigHelpers)
   install(TARGETS odia_refine EXPORT DIALibRefineTargets
           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
   if(DLR_BUILD_TOOL)
     install(TARGETS DIALibraryRefiner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
+  if(DLR_BUILD_FINETUNE)
+    install(TARGETS odia_tune EXPORT DIALibRefineTargets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    if(DLR_BUILD_TOOL)
+      install(TARGETS DIALibTune RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
   endif()
   install(DIRECTORY include/odia DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   install(EXPORT DIALibRefineTargets

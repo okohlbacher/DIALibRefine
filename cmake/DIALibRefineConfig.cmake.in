@@ -1,5 +1,5 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
-find_dependency(DIALibraryGenerator)
+find_dependency(DIALibGen)
 include("${CMAKE_CURRENT_LIST_DIR}/DIALibRefineTargets.cmake")
 check_required_components(DIALibRefine)
