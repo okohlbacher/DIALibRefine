@@ -15,6 +15,8 @@
 #include <odia/Library.h>
 #include <odia/LibraryRefiner.h>
 
+#include "ToolBoilerplate.h"
+
 #include <OpenMS/APPLICATIONS/TOPPBase.h>
 
 #include <nlohmann/json.hpp>
@@ -60,7 +62,13 @@ public:
   DIALibraryRefiner()
     : TOPPBase("DIALibraryRefiner",
                "Refine a DIA library against a reference run's identifications.",
-               false) {}
+               false) {
+#ifdef DLR_VERSION
+    // Our own version, not the OpenMS this happened to be built against.
+    version_ = DLR_VERSION;
+    verboseVersion_ = dlr::verboseVersion();
+#endif
+  }
 
 protected:
   void registerOptionsAndFlags_() override
@@ -307,6 +315,8 @@ protected:
 
 int main(int argc, const char** argv)
 {
+  dlr::disableUpdateCheckUnlessSet();
+  dlr::ToolHandlerRegistration ttd("DIALibraryRefiner");
   DIALibraryRefiner tool;
   return tool.main(argc, argv);
 }

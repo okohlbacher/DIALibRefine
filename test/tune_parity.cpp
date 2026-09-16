@@ -67,7 +67,14 @@ namespace
 
   double maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
   {
-    double m = 0; for (std::size_t i = 0; i < a.size(); ++i) { m = std::max(m, static_cast<double>(std::fabs(a[i] - b[i]))); } return m;
+    double m = 0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+      const double d = std::fabs(static_cast<double>(a[i]) - static_cast<double>(b[i]));
+      if (!std::isfinite(d)) { return INFINITY; }   // a NaN anywhere is a failure, not a zero
+      m = std::max(m, d);
+    }
+    return m;
   }
 
   void parity(const std::string& path, bool ccs)
@@ -104,7 +111,11 @@ namespace
     loadWeights(h, again);
     double worst = 0;
     auto a = model->named_parameters(); auto b = again->named_parameters();
-    for (const auto& kv : a) { worst = std::max(worst, (kv.value() - *b.find(kv.key())).abs().max().item<double>()); }
+    for (const auto& kv : a)
+    {
+      const double w = (kv.value() - *b.find(kv.key())).abs().max().item<double>();
+      worst = std::isfinite(w) ? std::max(worst, w) : INFINITY;
+    }
     check(worst == 0.0, std::string(ccs ? "ccs" : "rt") + ": perturbed model survives store->load exactly (worst " + std::to_string(worst) + ")");
     check(h.bytes != f.bytes, std::string(ccs ? "ccs" : "rt") + ": perturbed bytes differ from the original");
   }

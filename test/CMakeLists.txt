@@ -36,6 +36,9 @@ endif()
 if(TARGET odia_tune)
   add_executable(dlr_tune_parity tune_parity.cpp)
   target_link_libraries(dlr_tune_parity PRIVATE odia_tune)
+  if(DLR_LIBTORCH_DIR)
+    set_property(TARGET dlr_tune_parity APPEND PROPERTY BUILD_RPATH "${DLR_LIBTORCH_DIR}/lib")
+  endif()
   set(DLR_PEPTDEEP_ONNX_DIR "" CACHE PATH "Directory with the stock peptdeep_{rt,ccs}_dynamic.onnx for the parity test")
   if(EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx" AND EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_ccs_dynamic.onnx")
     add_test(NAME tune_parity COMMAND dlr_tune_parity
@@ -46,5 +49,38 @@ if(TARGET odia_tune)
   endif()
   if(TARGET DIALibTune)
     add_test(NAME DIALibTune_help COMMAND DIALibTune --help)
+  endif()
+endif()
+
+# The standalone gates: bare environment, own version, update check off,
+# descriptor export. Cheap, and each has shipped broken past a green build in
+# a sibling project.
+if(TARGET DIALibraryRefiner)
+  if(TARGET DIALibTune)
+    set(_dlr_tune_bin $<TARGET_FILE:DIALibTune>)
+  else()
+    set(_dlr_tune_bin "")
+  endif()
+  add_test(NAME standalone
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/standalone_test.sh
+                   $<TARGET_FILE:DIALibraryRefiner> "${_dlr_tune_bin}" ${PROJECT_VERSION})
+  set_tests_properties(standalone PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+# End to end: a synthetic report, both heads, bounded (~1 min on 2 threads).
+# Needs the stock models and a python with pyarrow + numpy; skipped otherwise.
+if(TARGET DIALibTune)
+  set(DLR_EXAMPLE_FASTA "-" CACHE FILEPATH "A protein FASTA for the synthetic-report test; - = synthetic proteins")
+  if(NOT DLR_EXAMPLE_FASTA)
+    set(DLR_EXAMPLE_FASTA "-")
+  endif()
+  find_program(DLR_PYTHON NAMES python3 python)
+  if(DLR_PYTHON AND EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx")
+    add_test(NAME tune_e2e
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tune_e2e.sh
+                     $<TARGET_FILE:DIALibTune> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
+    set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+  else()
+    message(STATUS "tune_e2e test not registered: needs python and DLR_PEPTDEEP_ONNX_DIR")
   endif()
 endif()

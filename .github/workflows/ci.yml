@@ -1,0 +1,399 @@
+name: build
+
+# Linux x64/arm64 and macOS x64/arm64: build, test, install, and prove the
+# installed tree stands on its own. On a v* tag the tree is made portable,
+# signed and notarized on macOS (stapled .dmg), and attached to the release.
+#
+# Copied from DIALibGen's ci.yml on purpose -- same conda recipe, same gates,
+# same seven MACOS_* secret names -- so the two tools release the same way.
+# What is different: libtorch (CPU) from conda-forge for the fine-tuner, and
+# two executables instead of one. No CUDA libtorch in CI: standard runners
+# have no GPU and the bundle would be 500-800 MB; the CUDA build is made on a
+# GPU machine (docs/fine-tuning.md).
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      package_dry_run:
+        description: 'Package (and sign, if secrets exist) without cutting a tag'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,   runner: ubuntu-24.04,     extra: "" }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, extra: "" }
+          - { name: macos-arm64, runner: macos-14,         extra: "llvm-openmp" }
+          - { name: macos-x64,   runner: macos-15-intel,   extra: "llvm-openmp" }
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # openms=3.5.0 from bioconda plus what its cmake package needs but does
+      # not pull in (Boost headers, Qt6). libtorch is pinned to the last version
+      # that co-installs with openms's Arrow/protobuf pins on all four platforms
+      # (measured: 2.10.0 solves everywhere; 2.13.0 does not). CPU build only.
+      # python/numpy/pyarrow are for the tests. create-args is a folded scalar:
+      # no comments inside it.
+      - name: Install OpenMS, ONNX Runtime, libtorch and the toolchain
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: dialibrefine
+          create-args: >-
+            openms=3.5.0
+            onnxruntime-cpp
+            libtorch=2.10.0=cpu*
+            libparquet
+            libarrow-dataset
+            libarrow-acero
+            nlohmann_json
+            xerces-c
+            libsvm
+            eigen
+            zlib
+            bzip2
+            libzip
+            hdf5
+            libcurl
+            libboost-devel
+            glpk
+            coin-or-cbc
+            coin-or-utils
+            qt6-main
+            cmake
+            ninja
+            cxx-compiler
+            patchelf
+            python
+            numpy
+            pyarrow
+            ${{ matrix.extra }}
+          condarc: |
+            channels:
+              - conda-forge
+              - bioconda
+          init-shell: bash
+          cache-environment: true
+
+      # The stock AlphaPeptDeep exports: the parity test loads them into the
+      # libtorch transcription and compares against ONNX Runtime, and the e2e
+      # test fine-tunes them. Same URL and SHA256s OpenMS pins.
+      - name: Restore the PeptDeep models
+        id: cache-models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: peptdeep-models-ccs41816f32-ms24141ea23-rt3f3b847e
+
+      - name: Fetch the PeptDeep models
+        if: steps.cache-models.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          fetch() {
+            curl -fsSL --retry 3 -o "models/$1" "http://archive.openms.de/openms/models/$1"
+            echo "$2  models/$1" | shasum -a 256 -c -
+          }
+          fetch peptdeep_ccs_dynamic.onnx 41816f325cdd838897b7e7dcaf291da5d4d3903a1532fc5dc9db7e0725015801
+          fetch peptdeep_ms2_dynamic.onnx 4141ea233d663b6f5b98ad80b8923ee685dae5cfdbe12243e2e30cd9c44ecf00
+          fetch peptdeep_rt_dynamic.onnx  3f3b847ea37a9333ac163409f3d4b343d021471548091c61aed6cfa398ce62fd
+
+      - name: Configure
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+            -DQT_HOST_PATH="$CONDA_PREFIX" \
+            -DDLR_BUILD_FINETUNE=ON \
+            -DTorch_DIR="$CONDA_PREFIX/share/cmake/Torch" \
+            -DDLR_PEPTDEEP_ONNX_DIR="$PWD/models" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/stage"
+
+      - name: Build
+        shell: bash -el {0}
+        run: cmake --build build -j
+
+      - name: Test
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          ctest --test-dir build --output-on-failure
+          # A test that is never ADDED does not fail -- it disappears.
+          for t in tune_parity tune_e2e standalone; do
+            ctest --test-dir build -N | grep -q "$t" \
+              || { echo "::error::test $t was not registered"; exit 1; }
+          done
+
+      - name: Install
+        shell: bash -el {0}
+        run: cmake --install build
+
+      # Against the INSTALLED tree, with `env -i`: a runner that still has the
+      # build tree on PATH passes a binary that cannot stand on its own.
+      - name: The installed binaries stand on their own
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          test -x stage/bin/DIALibraryRefiner && test -x stage/bin/DIALibTune
+          export OPENMS_DATA_PATH="$CONDA_PREFIX/share/OpenMS"
+          export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib"
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
+          bash test/standalone_test.sh stage/bin/DIALibraryRefiner stage/bin/DIALibTune \
+            "$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+
+      # ---------------------------------------------------------------------
+      # Release: on a v* tag, or a dispatch with package_dry_run.
+      # ---------------------------------------------------------------------
+      - name: Decide whether to package
+        id: pkg
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.package_dry_run }}" = "true" ]; then echo "package=true" >> "$GITHUB_OUTPUT"; else echo "package=false" >> "$GITHUB_OUTPUT"; fi
+          elif [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ]; then
+            echo "package=true" >> "$GITHUB_OUTPUT"; echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package=false" >> "$GITHUB_OUTPUT"; echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # macOS signing and notarization. Optional: without MACOS_CERTIFICATE_BASE64
+      # every step is skipped and the macOS artefacts stay ad-hoc signed. Gated
+      # on a step OUTPUT -- `secrets.*` in an `if:` invalidates the workflow.
+      - name: Decide whether to sign
+        id: sign
+        if: runner.os == 'macOS' && steps.pkg.outputs.package == 'true'
+        shell: bash
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          NOTARY: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARY_ID: ${{ secrets.MACOS_APPLE_ID }}
+          NOTARY_TEAM: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CERT" ]; then
+            echo "::notice::no MACOS_CERTIFICATE_BASE64 -- macOS artefacts stay ad-hoc signed"
+            echo "sign=false" >> "$GITHUB_OUTPUT"; echo "notarize=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "sign=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$NOTARY" ] && [ -n "$NOTARY_ID" ] && [ -n "$NOTARY_TEAM" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::signing without notarizing -- Gatekeeper still refuses these"
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import the Developer ID certificate
+        if: steps.sign.outputs.sign == 'true'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          KCPW="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
+          echo "::add-mask::$KCPW"
+          KC="$RUNNER_TEMP/dialibrefine-signing.keychain-db"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPW" "$KC" > /dev/null
+          security list-keychain -d user -s "$KC" $(security list-keychains -d user | tr -d '"' | xargs)
+          security default-keychain -d user -s "$KC"
+          IDENT=$(security find-identity -p codesigning -v "$KC" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+          [ -n "$IDENT" ] || { security find-identity -p codesigning -v "$KC"; echo "::error::no Developer ID Application identity in the imported certificate"; exit 1; }
+          if [ -n "$MACOS_SIGNING_IDENTITY" ] && [ "$MACOS_SIGNING_IDENTITY" != "$IDENT" ]; then
+            echo "::error::MACOS_SIGNING_IDENTITY does not match the imported certificate ($IDENT)"; exit 1
+          fi
+          echo "MACOS_SIGN_IDENTITY=$IDENT" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+          echo "signing as: $IDENT"
+
+      # The installed tree links OpenMS, Arrow, ONNX Runtime and libtorch out
+      # of the conda prefix by absolute path. Collect the closure, make the
+      # load paths relative, and prove it runs with NOTHING on the path.
+      - name: Make the install tree portable
+        if: steps.pkg.outputs.package == 'true'
+        timeout-minutes: 20
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          mkdir -p stage/lib stage/share/OpenMS
+          cp -R "$CONDA_PREFIX/share/OpenMS/." stage/share/OpenMS/
+          BINS="stage/bin/DIALibraryRefiner stage/bin/DIALibTune"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            copy_closure() {
+              otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+                case "$dep" in /usr/lib/*|/System/*) continue ;; esac
+                base=$(basename "$dep"); src="$dep"
+                case "$dep" in @*) src="$CONDA_PREFIX/lib/$base" ;; esac
+                [ -f "$src" ] || continue
+                [ -f "stage/lib/$base" ] || cp "$src" "stage/lib/$base"
+              done
+            }
+            for b in $BINS; do copy_closure "$b"; done
+            prev=0
+            for _ in 1 2 3 4 5 6 7 8; do
+              n=$(ls stage/lib | wc -l); [ "$n" -eq "$prev" ] && break; prev=$n
+              for dy in stage/lib/*.dylib; do copy_closure "$dy"; done
+            done
+            retarget() {
+              otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+                case "$dep" in /usr/lib/*|/System/*) continue ;; esac
+                base=$(basename "$dep"); [ -f "stage/lib/$base" ] || continue
+                install_name_tool -change "$dep" "@executable_path/../lib/$base" "$1"
+              done
+            }
+            for b in $BINS; do retarget "$b"; done
+            for dy in stage/lib/*.dylib; do
+              install_name_tool -id "@executable_path/../lib/$(basename "$dy")" "$dy"; retarget "$dy"
+            done
+            # Editing a Mach-O invalidates its signature; re-sign every one.
+            # With a Developer ID this is the real signature: hardened runtime
+            # and timestamp on every Mach-O, as notarization requires.
+            if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+              sign() { codesign --force --timestamp --options runtime --keychain "$MACOS_KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "$@"; }
+            else
+              sign() { codesign --force --sign - "$@"; }
+            fi
+            for dy in stage/lib/*.dylib; do sign "$dy"; done
+            for b in $BINS; do sign "$b"; codesign --verify --strict --verbose=2 "$b"; done
+          else
+            export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
+            copy_closure() {
+              local missing; missing=$(ldd "$1" | awk '/not found/{print $1}')
+              [ -z "$missing" ] || { echo "::error::unresolved in $1: $missing"; exit 1; }
+              ldd "$1" | awk '/=> \//{print $3}' | while read -r so; do
+                case "$so" in /lib/*|/lib64/*|/usr/lib/*|*/ld-linux*) continue ;; esac
+                cp -n "$so" stage/lib/ 2>/dev/null || true
+              done
+            }
+            for b in $BINS; do copy_closure "$b"; done
+            prev=0
+            for _ in 1 2 3 4 5 6 7 8; do
+              n=$(ls stage/lib | wc -l); [ "$n" -eq "$prev" ] && break; prev=$n
+              for so in stage/lib/*.so*; do copy_closure "$so"; done
+            done
+            for b in $BINS; do patchelf --set-rpath '$ORIGIN/../lib' "$b"; done
+            for so in stage/lib/*.so*; do patchelf --set-rpath '$ORIGIN' "$so" || true; done
+          fi
+          want=$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          for b in $BINS; do
+            env -i HOME="$HOME" "$PWD/$b" --help > portable.txt 2>&1 || { echo "::error::$b is not portable"; cat portable.txt; exit 1; }
+            grep -q "^Version: $want" portable.txt || { echo "::error::$b reports the wrong version"; exit 1; }
+          done
+          test -s stage/share/OpenMS/CHEMISTRY/unimod.xml
+          # --help loads no model. The claim the archive makes is that it
+          # fine-tunes: run the bounded e2e from the bare tree.
+          env -i HOME="$HOME" PATH="$CONDA_PREFIX/bin:/usr/bin:/bin" \
+            bash test/tune_e2e.sh "$PWD/stage/bin/DIALibTune" "$PWD/models" \
+              - "$CONDA_PREFIX/bin/python" \
+            || { echo "::error::the staged bundle cannot fine-tune"; exit 1; }
+          echo "portable bundle ok: $(find stage/lib -name '*.so*' -o -name '*.dylib' | wc -l) libraries"
+
+      - name: Package the CLI
+        if: steps.pkg.outputs.package == 'true'
+        shell: bash -el {0}
+        run: tar -C stage -czf "DIALibRefine-${{ matrix.name }}.tar.gz" .
+
+      # A stapled .dmg for macOS: a .tar.gz cannot carry a notarization ticket,
+      # so the first run of a quarantined copy would check with Apple online
+      # while syspolicyd inspects every dylib. The image is signed, notarized
+      # and stapled; the tarball is notarized through the same ticket.
+      - name: Build, sign, notarize and staple the macOS disk image
+        if: runner.os == 'macOS' && steps.pkg.outputs.package == 'true'
+        timeout-minutes: 60
+        shell: bash
+        env:
+          MACOS_APPLE_ID: ${{ secrets.MACOS_APPLE_ID }}
+          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DMG="DIALibRefine-${{ matrix.name }}.dmg"
+          rm -rf dmgroot && mkdir -p dmgroot && cp -R stage dmgroot/DIALibRefine
+          hdiutil create -volname DIALibRefine -srcfolder dmgroot -ov -format UDZO "$DMG"
+          if [ "${{ steps.sign.outputs.sign }}" = "true" ]; then
+            codesign --force --timestamp --keychain "$MACOS_KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+          fi
+          if [ "${{ steps.sign.outputs.notarize }}" = "true" ]; then
+            ditto -c -k --keepParent stage "$RUNNER_TEMP/cli.zip"
+            bash .github/notarize.sh "$RUNNER_TEMP/cli.zip"
+            bash .github/notarize.sh "$DMG"
+            xcrun stapler staple "$DMG"
+            spctl --assess --type open --context context:primary-signature -vv "$DMG"
+            xcrun stapler validate "$DMG"
+            codesign --verify --strict --verbose=2 stage/bin/DIALibTune
+          fi
+
+      - uses: actions/upload-artifact@v5
+        if: steps.pkg.outputs.package == 'true'
+        with:
+          name: bundles-${{ matrix.name }}
+          path: |
+            DIALibRefine-${{ matrix.name }}.tar.gz
+            DIALibRefine-${{ matrix.name }}.dmg
+          if-no-files-found: warn
+
+      - name: Attach to the release
+        if: steps.pkg.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DIALibRefine-${{ matrix.name }}.tar.gz
+            DIALibRefine-${{ matrix.name }}.dmg
+          fail_on_unmatched_files: false
+
+      - name: Delete the signing keychain
+        if: always() && steps.sign.outputs.sign == 'true'
+        shell: bash
+        run: security delete-keychain "$RUNNER_TEMP/dialibrefine-signing.keychain-db" || true
+
+  # A release whose README links 404 is worse than none: assert the four
+  # tarballs and the two disk images are on the tag.
+  release-complete:
+    needs: build
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Every expected asset is on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          have=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          missing=0
+          for n in linux-x64 linux-arm64 macos-arm64 macos-x64; do
+            printf '%s' "$have" | grep -qx "DIALibRefine-$n.tar.gz" || { echo "::error::no tarball for $n on $tag"; missing=1; }
+          done
+          for n in macos-arm64 macos-x64; do
+            printf '%s' "$have" | grep -qx "DIALibRefine-$n.dmg" || { echo "::error::no .dmg for $n on $tag"; missing=1; }
+          done
+          exit $missing

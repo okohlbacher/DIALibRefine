@@ -41,13 +41,14 @@ namespace ODIA::tune
     std::string model_out;       ///< tuned ONNX; sidecars <model_out>.tune.json / .trajectory.tsv
     // observation filter
     double q_value = 0.01;
-    int min_charge = 2;          ///< z1 is censored at the mobility ramp top; keep it out of CCS by default
+    int min_charge = 2;          ///< CCS only: z1 is censored at the mobility ramp top; RT uses every charge
+    bool allow_z1 = false;       ///< CCS: required to set min_charge below 2
     double rt_spread_max = 0.2;  ///< minutes; an RT unit whose charge states disagree by more is dropped
     double rt_max_minutes = 0;   ///< rt_norm denominator; 0 = max observed RT
     // cohorts
     std::size_t train_size = 0;  ///< 0 = full pool
     double train_frac = 0;       ///< alternative to train_size
-    bool inner_val = true;       ///< false: validation = training (selection is then optimistic)
+    bool inner_val = true;       ///< false: validation = TEST (selection is then optimistic and TEST is no longer held out)
     // recipe
     int epochs = 100;
     int warmup = 10;
@@ -56,7 +57,7 @@ namespace ODIA::tune
     // stopping
     int eval_every = 1;
     int min_epochs = 20;
-    int patience = 10;
+    int patience = 10;           ///< epochs without progress (checkpoints when eval_every = 1)
     double rel_tol = 0.005;
     double abs_tol = 0;
     double max_seconds = 0;
@@ -69,16 +70,18 @@ namespace ODIA::tune
 
   struct Metrics
   {
-    std::size_t n = 0;
+    std::size_t n = 0, nonfinite_predictions = 0;
     double rmse = NAN, sd = NAN, mean_err = NAN, p95 = NAN;
     double calibrated_sd = NAN, cal_slope = NAN, cal_intercept = NAN;
-    std::map<int, double> sd_by_charge;   ///< CCS only
+    std::map<int, double> sd_by_charge;        ///< CCS only, groups of >= 30
+    std::map<int, std::size_t> n_by_charge;
   };
 
   struct TuneResult
   {
     // cohorts
     std::size_t observations = 0, units = 0, test = 0, val = 0, pool = 0, training = 0;
+    bool val_is_test = false;
     double rt_max_minutes = 0;
     // course
     int epochs_run = 0, best_epoch = 0;
@@ -91,7 +94,9 @@ namespace ODIA::tune
     std::string model_out, model_in_sha256, model_out_sha256;
   };
 
-  /// Run the fine-tune. Throws std::runtime_error with a reason a user can act on.
+  /// Run the fine-tune. Throws std::runtime_error with a reason a user can act
+  /// on -- including when no checkpoint beat the stock model, in which case the
+  /// provenance sidecar is written and the model is not.
   TuneResult finetune(const TuneParams& params, std::ostream& log);
 
   const char* headName(HeadKind h);

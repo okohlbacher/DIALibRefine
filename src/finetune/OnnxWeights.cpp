@@ -21,6 +21,7 @@ namespace ODIA::tune
         for (;;)
         {
           if (pos >= b.size()) { throw std::runtime_error("truncated ONNX (varint)"); }
+          if (sh > 63) { throw std::runtime_error("malformed ONNX (varint longer than 10 bytes)"); }
           const std::uint8_t x = b[pos++];
           r |= static_cast<std::uint64_t>(x & 0x7f) << sh; sh += 7;
           if (!(x & 0x80)) { return r; }
@@ -35,9 +36,14 @@ namespace ODIA::tune
           const std::uint64_t key = varint(pos);
           const int field = static_cast<int>(key >> 3), wt = static_cast<int>(key & 7);
           if (wt == 0) { const std::uint64_t v = varint(pos); cb(field, wt, v, 0, 0); }
-          else if (wt == 1) { cb(field, wt, 0, pos, 8); pos += 8; }
-          else if (wt == 5) { cb(field, wt, 0, pos, 4); pos += 4; }
-          else if (wt == 2) { const std::size_t ln = static_cast<std::size_t>(varint(pos)); cb(field, wt, 0, pos, ln); pos += ln; }
+          else if (wt == 1) { if (end - pos < 8) { throw std::runtime_error("truncated ONNX (fixed64)"); } cb(field, wt, 0, pos, 8); pos += 8; }
+          else if (wt == 5) { if (end - pos < 4) { throw std::runtime_error("truncated ONNX (fixed32)"); } cb(field, wt, 0, pos, 4); pos += 4; }
+          else if (wt == 2)
+          {
+            const std::uint64_t ln = varint(pos);
+            if (ln > end - pos) { throw std::runtime_error("truncated ONNX (length-delimited field runs past its message)"); }
+            cb(field, wt, 0, pos, static_cast<std::size_t>(ln)); pos += static_cast<std::size_t>(ln);
+          }
           else { throw std::runtime_error("ONNX: unsupported wire type"); }
         }
       }
@@ -116,8 +122,13 @@ namespace ODIA::tune
     torch::Tensor asTensor(const OnnxFile& f, const OnnxFile::Tensor& t)
     {
       if (t.data_type != 1) { throw std::runtime_error("initializer is not float32: " + t.name); }
-      std::int64_t n = 1; for (auto d : t.dims) { n *= d; }
-      if (static_cast<std::size_t>(n) * 4 != t.raw_length) { throw std::runtime_error("raw_data length mismatch: " + t.name); }
+      std::uint64_t n = 1;
+      for (auto d : t.dims)
+      {
+        if (d < 0 || (d > 0 && n > (std::uint64_t{1} << 40) / static_cast<std::uint64_t>(d))) { throw std::runtime_error("implausible initializer shape: " + t.name); }
+        n *= static_cast<std::uint64_t>(d);
+      }
+      if (n * 4 != t.raw_length || t.raw_offset + t.raw_length > f.bytes.size()) { throw std::runtime_error("raw_data length mismatch: " + t.name); }
       auto out = torch::empty(t.dims, torch::kFloat32);
       std::memcpy(out.data_ptr<float>(), f.bytes.data() + t.raw_offset, t.raw_length);
       return out;
@@ -197,20 +208,28 @@ namespace ODIA::tune
     }
     const Names n = positional(f);
     // mod_nn (2,103) is stored transposed (103,2); attn (1,256) as (256,1)
-    param(model, "encoder.mod_nn.weight").copy_(asTensor(f, f.initializer(n.matmul[0])).t()); ++count;
-    param(model, "encoder.attn.weight").copy_(asTensor(f, f.initializer(n.matmul[1])).t()); ++count;
+    auto copyExact = [&](const std::string& tname, const torch::Tensor& src)
+    {
+      auto dst = param(model, tname);
+      if (src.sizes() != dst.sizes()) { throw std::runtime_error("shape mismatch loading " + tname + ": ONNX " + std::to_string(src.numel()) + " values vs model " + std::to_string(dst.numel())); }
+      dst.copy_(src);
+    };
+    copyExact("encoder.mod_nn.weight", asTensor(f, f.initializer(n.matmul[0])).t()); ++count;
+    copyExact("encoder.attn.weight", asTensor(f, f.initializer(n.matmul[1])).t()); ++count;
     for (int l = 0; l < 2; ++l)
     {
       auto W = asTensor(f, f.initializer(n.lstm_w[l]));   // (2, 512, in)
       auto R = asTensor(f, f.initializer(n.lstm_r[l]));   // (2, 512, 128)
       auto B = asTensor(f, f.initializer(n.lstm_b[l]));   // (2, 1024)
+      if (W.dim() != 3 || W.size(0) != 2 || W.size(1) != 4 * HIDDEN || R.sizes() != torch::IntArrayRef({2, 4 * HIDDEN, HIDDEN}) || B.sizes() != torch::IntArrayRef({2, 8 * HIDDEN}))
+      { throw std::runtime_error("LSTM layer " + std::to_string(l) + " has an unexpected W/R/B shape"); }
       for (int d = 0; d < 2; ++d)
       {
         const std::string sfx = "_l" + std::to_string(l) + (d ? "_reverse" : "");
-        param(model, "encoder.rnn.weight_ih" + sfx).copy_(gatesToTorch(W[d]));
-        param(model, "encoder.rnn.weight_hh" + sfx).copy_(gatesToTorch(R[d]));
-        param(model, "encoder.rnn.bias_ih" + sfx).copy_(gatesToTorch(B[d].slice(0, 0, 4 * HIDDEN)));
-        param(model, "encoder.rnn.bias_hh" + sfx).copy_(gatesToTorch(B[d].slice(0, 4 * HIDDEN, 8 * HIDDEN)));
+        copyExact("encoder.rnn.weight_ih" + sfx, gatesToTorch(W[d]));
+        copyExact("encoder.rnn.weight_hh" + sfx, gatesToTorch(R[d]));
+        copyExact("encoder.rnn.bias_ih" + sfx, gatesToTorch(B[d].slice(0, 0, 4 * HIDDEN)));
+        copyExact("encoder.rnn.bias_hh" + sfx, gatesToTorch(B[d].slice(0, 4 * HIDDEN, 8 * HIDDEN)));
       }
       count += 3;
     }

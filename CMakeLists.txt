@@ -25,7 +25,8 @@ option(DLR_BUILD_TESTS "Build the test suite" ${DLR_IS_TOP_LEVEL})
 # is fetched instead, its odia_library target belongs to no export set, and
 # exporting a target that links it is a CMake error rather than a broken install
 # discovered later.
-option(DLR_INSTALL     "Generate install rules" OFF)
+option(DLR_INSTALL     "Generate install rules for the LIBRARIES and headers (needs an installed DIALibGen)" OFF)
+option(DLR_INSTALL_TOOLS "Install the executables (works with a fetched DIALibGen too)" ON)
 
 include(GNUInstallDirs)
 
@@ -84,6 +85,10 @@ if(DLR_BUILD_TOOL)
   add_executable(DIALibraryRefiner src/DIALibraryRefiner.cpp)
   target_link_libraries(DIALibraryRefiner PRIVATE
     odia_refine nlohmann_json::nlohmann_json)
+  target_compile_definitions(DIALibraryRefiner PRIVATE DLR_VERSION="${PROJECT_VERSION}")
+  if(DLR_INSTALL_TOOLS)
+    install(TARGETS DIALibraryRefiner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -100,16 +105,54 @@ endif()
 # refused below rather than failing at link time with 300 undefined symbols.
 # ---------------------------------------------------------------------------
 option(DLR_BUILD_FINETUNE "Build DIALibTune and the fine-tuning library (needs libtorch)" OFF)
+set(DLR_LIBTORCH_DIR "" CACHE PATH
+    "Link an unpacked libtorch zip DIRECTLY (its include/ and lib/), bypassing TorchConfig.cmake. \
+Use this for a CUDA zip: TorchConfig enables the CUDA language and wants a toolkit that matches \
+the zip, although nothing here compiles CUDA code. Empty = find_package(Torch).")
 if(DLR_BUILD_FINETUNE)
-  find_package(Torch REQUIRED)
-  string(FIND "${TORCH_CXX_FLAGS}" "_GLIBCXX_USE_CXX11_ABI=0" _dlr_pre_cxx11)
-  if(NOT _dlr_pre_cxx11 EQUAL -1)
-    message(FATAL_ERROR "libtorch at ${Torch_DIR} is the pre-CXX11-ABI build "
-                        "(_GLIBCXX_USE_CXX11_ABI=0); OpenMS and Arrow need the "
-                        "CXX11 ABI. Use the libtorch-cxx11-abi-shared-with-deps "
-                        "zip or a conda libtorch.")
+  if(DLR_LIBTORCH_DIR)
+    # The zip's own layout: lib/libtorch.so pulls libtorch_cpu.so and, in a
+    # CUDA build, libtorch_cuda.so. Both must be linked --no-as-needed or the
+    # backends never register (TorchConfig does the same for libtorch.so).
+    set(_dlr_tl "${DLR_LIBTORCH_DIR}/lib")
+    foreach(_lib torch torch_cpu c10)
+      if(NOT EXISTS "${_dlr_tl}/lib${_lib}.so" AND NOT EXISTS "${_dlr_tl}/lib${_lib}.dylib")
+        message(FATAL_ERROR "DLR_LIBTORCH_DIR=${DLR_LIBTORCH_DIR} has no lib/lib${_lib}.so")
+      endif()
+    endforeach()
+    add_library(dlr_torch INTERFACE)
+    target_include_directories(dlr_torch INTERFACE
+      "${DLR_LIBTORCH_DIR}/include" "${DLR_LIBTORCH_DIR}/include/torch/csrc/api/include")
+    target_compile_definitions(dlr_torch INTERFACE _GLIBCXX_USE_CXX11_ABI=1)
+    set(_dlr_torch_libs "${_dlr_tl}/libtorch.so" "${_dlr_tl}/libtorch_cpu.so")
+    if(EXISTS "${_dlr_tl}/libtorch_cuda.so")
+      list(APPEND _dlr_torch_libs "${_dlr_tl}/libtorch_cuda.so" "${_dlr_tl}/libc10_cuda.so")
+      set(_dlr_torch_cuda "yes")
+    else()
+      set(_dlr_torch_cuda "no")
+    endif()
+    if(APPLE)
+      target_link_libraries(dlr_torch INTERFACE ${_dlr_torch_libs} "${_dlr_tl}/libc10.dylib")
+    else()
+      target_link_libraries(dlr_torch INTERFACE
+        -Wl,--no-as-needed ${_dlr_torch_libs} -Wl,--as-needed "${_dlr_tl}/libc10.so")
+    endif()
+    set(TORCH_LIBRARIES dlr_torch)
+    set(TORCH_CXX_FLAGS "")
+    file(READ "${DLR_LIBTORCH_DIR}/build-version" _dlr_torch_ver)
+    string(STRIP "${_dlr_torch_ver}" _dlr_torch_ver)
+    message(STATUS "libtorch: ${DLR_LIBTORCH_DIR} linked directly (${_dlr_torch_ver}, CUDA libs: ${_dlr_torch_cuda})")
+  else()
+    find_package(Torch REQUIRED)
+    string(FIND "${TORCH_CXX_FLAGS}" "_GLIBCXX_USE_CXX11_ABI=0" _dlr_pre_cxx11)
+    if(NOT _dlr_pre_cxx11 EQUAL -1)
+      message(FATAL_ERROR "libtorch at ${Torch_DIR} is the pre-CXX11-ABI build "
+                          "(_GLIBCXX_USE_CXX11_ABI=0); OpenMS and Arrow need the "
+                          "CXX11 ABI. Use the libtorch-cxx11-abi-shared-with-deps "
+                          "zip or a conda libtorch.")
+    endif()
+    message(STATUS "libtorch: ${Torch_DIR} (${Torch_VERSION}, CUDA: ${TORCH_CUDA_LIBRARIES})")
   endif()
-  message(STATUS "libtorch: ${Torch_DIR} (${Torch_VERSION}, CUDA: ${TORCH_CUDA_LIBRARIES})")
 
   add_library(odia_tune STATIC
     src/finetune/OnnxWeights.cpp
@@ -127,10 +170,17 @@ if(DLR_BUILD_FINETUNE)
   if(DLR_BUILD_TOOL)
     add_executable(DIALibTune src/DIALibTune.cpp)
     target_link_libraries(DIALibTune PRIVATE odia_tune)
+    target_compile_definitions(DIALibTune PRIVATE DLR_VERSION="${PROJECT_VERSION}")
+    if(DLR_INSTALL_TOOLS)
+      install(TARGETS DIALibTune RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
     # A relocatable binary: libtorch's .so live next to it in ../lib when packaged.
     set_target_properties(DIALibTune PROPERTIES
       INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN"
       BUILD_WITH_INSTALL_RPATH OFF)
+    if(DLR_LIBTORCH_DIR)
+      set_property(TARGET DIALibTune APPEND PROPERTY BUILD_RPATH "${DLR_LIBTORCH_DIR}/lib")
+    endif()
   endif()
 endif()
 
@@ -138,15 +188,9 @@ if(DLR_INSTALL)
   include(CMakePackageConfigHelpers)
   install(TARGETS odia_refine EXPORT DIALibRefineTargets
           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-  if(DLR_BUILD_TOOL)
-    install(TARGETS DIALibraryRefiner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-  endif()
   if(DLR_BUILD_FINETUNE)
     install(TARGETS odia_tune EXPORT DIALibRefineTargets
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-    if(DLR_BUILD_TOOL)
-      install(TARGETS DIALibTune RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    endif()
   endif()
   install(DIRECTORY include/odia DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   install(EXPORT DIALibRefineTargets
