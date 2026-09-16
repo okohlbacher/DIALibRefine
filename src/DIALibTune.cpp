@@ -74,6 +74,7 @@ protected:
     registerTOPPSubsection_("machine", "Device");
     registerStringOption_("machine:device", "<dev>", "cpu", "cpu or cuda[:N]", false);
     registerIntOption_("machine:threads", "<n>", 4, "Torch threads on CPU (4 measured fastest on this model; more thrashes)", false);
+    registerFlag_("machine:no_cudnn", "CUDA: do not use cuDNN (needed when only its loader shim is installed, as in pytorch.org's libtorch zips); slower");
     registerIntOption_("machine:seed", "<n>", 20260803, "Seed for the training subsample and batch order", false);
   }
 
@@ -107,6 +108,7 @@ protected:
     p.select = getStringOption_("stop:select") == "rmse" ? Select::Rmse : Select::CalibratedSd;
     p.device = getStringOption_("machine:device");
     p.threads = getIntOption_("machine:threads");
+    p.cudnn = !getFlag_("machine:no_cudnn");
     p.seed = static_cast<std::uint32_t>(getIntOption_("machine:seed"));
 
     if (p.epochs < 1 || p.warmup < 0 || p.warmup > p.epochs) { writeLogError_("train:warmup must be in [0, train:epochs]"); return ILLEGAL_PARAMETERS; }

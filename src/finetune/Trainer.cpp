@@ -446,8 +446,12 @@ namespace ODIA::tune
     }
     else if (p.device != "cpu") { throw std::runtime_error("unknown device " + p.device); }
     if (dev.is_cpu()) { torch::set_num_threads(std::max(1, p.threads)); }
+    // pytorch.org's CUDA zips ship only cuDNN's loader shim; without the sub-
+    // libraries on the library path cudnnCreate aborts the process (not an
+    // exception). The native kernels are slower but always there.
+    if (dev.is_cuda()) { at::globalContext().setUserEnabledCuDNN(p.cudnn); }
     torch::manual_seed(p.seed);
-    log << "device " << p.device << (dev.is_cpu() ? " (" + std::to_string(torch::get_num_threads()) + " threads)" : "") << ", libtorch " << TORCH_VERSION << "\n";
+    log << "device " << p.device << (dev.is_cpu() ? " (" + std::to_string(torch::get_num_threads()) + " threads)" : (p.cudnn ? " (cuDNN on)" : " (cuDNN off)")) << ", libtorch " << TORCH_VERSION << "\n";
 
     // data + cohorts
     Dataset d = loadReport(p, log);
@@ -615,7 +619,7 @@ namespace ODIA::tune
 
     nlohmann::json prov = {
       {"tool", "DIALibTune"}, {"schema_version", 1}, {"head", headName(p.head)}, {"units", ccs ? "1/K0 (model: CCS A^2)" : "minutes (model: rt_norm)"},
-      {"libtorch", TORCH_VERSION}, {"device", p.device},
+      {"libtorch", TORCH_VERSION}, {"device", p.device}, {"cudnn", p.cudnn},
       {"recipe", {{"loss", "L1"}, {"optimizer", "Adam"}, {"lr", p.lr}, {"betas", {0.9, 0.999}}, {"eps", 1e-8}, {"weight_decay", 0.0}, {"clip_grad_norm", 1.0},
                   {"batch_size", p.batch_size}, {"epochs", p.epochs}, {"warmup", p.warmup}, {"schedule", "linear warmup then cosine, stepped per epoch"}, {"dropout", 0.1}, {"seed", p.seed}}},
       {"stopping", {{"eval_every", p.eval_every}, {"min_epochs", p.min_epochs}, {"patience_epochs", p.patience}, {"rel_tol", p.rel_tol}, {"abs_tol", p.abs_tol}, {"max_seconds", p.max_seconds},

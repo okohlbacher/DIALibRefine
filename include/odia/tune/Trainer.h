@@ -64,6 +64,7 @@ namespace ODIA::tune
     Select select = Select::CalibratedSd;
     // machine
     std::string device = "cpu";  ///< "cpu" or "cuda[:N]"
+    bool cudnn = true;           ///< CUDA: let libtorch use cuDNN for the LSTM/conv (needs the full cuDNN 9 library set)
     int threads = 4;
     std::uint32_t seed = 20260803;
   };
