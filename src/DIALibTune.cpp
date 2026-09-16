@@ -116,13 +116,15 @@ protected:
     if (p.train_size && p.train_frac > 0) { writeLogError_("give cohort:train_size or cohort:train_frac, not both"); return ILLEGAL_PARAMETERS; }
     if (p.train_frac < 0 || p.train_frac > 1) { writeLogError_("cohort:train_frac must be in [0,1]"); return ILLEGAL_PARAMETERS; }
     if (p.rel_tol < 0 || p.abs_tol < 0 || p.max_seconds < 0 || p.lr <= 0 || p.q_value < 0) { writeLogError_("rel_tol, abs_tol, max_seconds and q_value must be >= 0 and lr > 0"); return ILLEGAL_PARAMETERS; }
-    if (p.batch_size > 1024) { OPENMS_LOG_WARN << "train:batch_size " << p.batch_size << " exceeds the recipe's 1024; the measured results used 1024\n"; }
+    if (p.batch_size > 1024) { writeLogWarn_("train:batch_size " + std::to_string(p.batch_size) + " exceeds the recipe's 1024; the measured results used 1024"); }
 
     try
     {
-      const TuneResult r = finetune(p, OPENMS_LOG_INFO);
-      OPENMS_LOG_INFO << "wrote " << r.model_out << "  (" << r.stop_reason << ", best epoch " << r.best_epoch
-                      << " of " << r.epochs_run << ", " << r.updates << " updates, " << r.train_seconds << " s training)\n";
+      // The stream object, not the OPENMS_LOG_INFO macro: on OpenMS 3.5 the
+      // macro carries an OpenMP _Pragma and is not an expression.
+      const TuneResult r = finetune(p, OpenMS_Log_info);
+      writeLogInfo_("wrote " + r.model_out + "  (" + r.stop_reason + ", best epoch " + std::to_string(r.best_epoch)
+                    + " of " + std::to_string(r.epochs_run) + ", " + std::to_string(r.updates) + " updates, " + std::to_string(r.train_seconds) + " s training)");
     }
     catch (const std::exception& e)
     {
