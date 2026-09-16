@@ -47,9 +47,10 @@ hypotheses is being scored against a null it invented.
   than no-ops. The paper measures intensity replacement as a wash — *"RMSD in
   relative fragment ion intensity remain comparable between approaches"* across
   three separate figures — so it is the one component with no evidence behind it.
-- **Models are not fine-tuned.** Transfer learning is a *downstream* stage in the
-  paper, not an alternative: its training set is the reconstructed library. Run
-  this first, then fine-tune on its output if you want that arm.
+- **The C++ tool does not fine-tune models.** Transfer learning is a *downstream*
+  stage in the paper, not an alternative: its training set is the reconstructed
+  library. That stage is provided as scripts under `tools/` (see below), so torch
+  never enters the tool.
 
 ## Building
 
@@ -124,8 +125,8 @@ against the same reference. The 1/K0 mean of −0.0204 against a mean 1/K0 near
 **The refined library is a per-run object.** Its RT column holds the reference
 run's observed retention times, not iRT — the column's meaning has changed, and
 the tool says so on every run. It is correct for that run and for runs on the
-same gradient, and wrong elsewhere. Transferring a per-run RT model across runs
-has cost 2,027 precursors in this project's own measurements.
+same gradient, and wrong elsewhere. Cross-run transfer of a per-run RT model has
+not been cleanly measured in this project; treat the output as per-run until it is.
 
 **A reconstructed library launders its own false positives.** The authors concede
 this: *"our approach may transfer false positives… FDR estimation to be more
