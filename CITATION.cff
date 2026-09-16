@@ -1,0 +1,66 @@
+cff-version: 1.2.0
+title: DIALibRefine
+message: >-
+  If you use this software, cite it as below, and cite the method paper
+  (Charkow et al.) and AlphaPeptDeep (Zeng et al.) for the reconstruction
+  and the models respectively.
+type: software
+authors:
+  - family-names: Kohlbacher
+    given-names: Oliver
+    orcid: https://orcid.org/0000-0003-1739-4598
+repository-code: https://github.com/okohlbacher/DIALibRefine
+license: BSD-3-Clause
+version: 0.1.0
+date-released: 2026-09-17
+keywords:
+  - proteomics
+  - data-independent acquisition
+  - spectral library
+  - retention time
+  - ion mobility
+  - transfer learning
+references:
+  - type: article
+    title: Reference-Based Library Construction Improves Performance in low-input diaPASEF Workflows
+    authors:
+      - family-names: Charkow
+        given-names: Joshua
+      - family-names: Ghaznavi
+        given-names: A.
+      - family-names: Seale
+        given-names: J.
+      - family-names: Peng
+        given-names: H.
+      - family-names: Gingras
+        given-names: Anne-Claude
+      - family-names: Röst
+        given-names: Hannes L.
+    doi: 10.64898/2026.04.29.721088
+    year: 2026
+    journal: bioRxiv
+  - type: article
+    title: "AlphaPeptDeep: a modular deep learning framework to predict peptide properties for proteomics"
+    authors:
+      - family-names: Zeng
+        given-names: Wen-Feng
+      - family-names: Zhou
+        given-names: Xie-Xuan
+      - family-names: Willems
+        given-names: Sander
+      - family-names: Ammar
+        given-names: Constantin
+      - family-names: Wahle
+        given-names: Maria
+      - family-names: Bludau
+        given-names: Isabell
+      - family-names: Voytik
+        given-names: Eugenia
+      - family-names: Strauss
+        given-names: Maximilian T.
+      - family-names: Mann
+        given-names: Matthias
+    doi: 10.1038/s41467-022-34904-3
+    journal: Nature Communications
+    volume: 13
+    year: 2022

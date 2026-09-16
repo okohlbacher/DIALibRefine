@@ -1,20 +1,28 @@
 # DIALibRefine
 
-Refine a DIA spectral library against a reference run: replace predicted
-retention time and ion mobility with what was actually measured, and delete the
-precursors the reference never saw.
+Make a predicted DIA spectral library right for one run, two ways:
 
-The counterpart to [DIALibGen](https://github.com/okohlbacher/DIALibGen), which
-predicts a library from a FASTA. This one corrects one.
+- **`DIALibraryRefiner`** — replace predicted retention time and ion mobility
+  with what the run actually measured, and delete the precursors it never saw
+  (the peptide-centric reconstruction of Charkow *et al.*).
+- **`DIALibTune`** — re-train AlphaPeptDeep's RT and CCS models on the run's
+  identifications, in C++ with libtorch, and write them back into the stock
+  ONNX files so that every predicted precursor gets the run's RT scale and
+  mobility calibration. No Python.
 
-> **Status: pre-release (0.1.0).** The config schema and the output contract are
-> not frozen.
+The counterpart to [DIALibGen](https://github.com/okohlbacher/DIALibGen),
+which predicts a library from a FASTA. This corrects one, and corrects the
+models that predicted it.
+
+> **Status: pre-release (0.1.0).** The config schema and the output contracts
+> are not frozen. Everything below is measured; the numbers carry their run
+> and date in [docs/results.md](docs/results.md).
 
 ## The method
 
-This implements the "peptide-centric library reconstruction" of Charkow,
-Ghaznavi, Seale, Peng, Gingras & Röst, *Reference-Based Library Construction
-Improves Performance in low-input diaPASEF Workflows*,
+`DIALibraryRefiner` implements the "peptide-centric library reconstruction"
+of Charkow, Ghaznavi, Seale, Peng, Gingras & Röst, *Reference-Based Library
+Construction Improves Performance in low-input diaPASEF Workflows*,
 [bioRxiv 10.64898/2026.04.29.721088](https://www.biorxiv.org/content/10.64898/2026.04.29.721088v2).
 
 Three operations, in this order:
@@ -36,7 +44,13 @@ mechanism they name is that OpenSWATH estimates the proportion of nulls in the
 library when computing q-values, so a library that is >98% never-observed
 hypotheses is being scored against a null it invented.
 
-### What it does not do
+`DIALibTune` is the paper's *downstream* stage — transfer learning on the
+run's identifications — for the precursors the run did not see. It keeps
+AlphaPeptDeep's own fine-tuning recipe, adds protein-level held-out cohorts, a
+measured stopping rule, and a refusal to write a model that did not beat the
+stock one. [docs/fine-tuning.md](docs/fine-tuning.md) is the contract.
+
+### What neither does
 
 - **m/z is never touched**, and the paper does not touch it either. A
   precursor's m/z follows from its sequence, charge and modifications; what
@@ -47,53 +61,58 @@ hypotheses is being scored against a null it invented.
   than no-ops. The paper measures intensity replacement as a wash — *"RMSD in
   relative fragment ion intensity remain comparable between approaches"* across
   three separate figures — so it is the one component with no evidence behind it.
-- **The C++ tool does not fine-tune models.** Transfer learning is a *downstream*
-  stage in the paper, not an alternative: its training set is the reconstructed
-  library. That stage is provided as scripts under `tools/` (see below), so torch
-  never enters the tool.
+  The MS2 model is not tuned for the same reason.
 
 ## Building
 
-Needs an installed OpenMS, Arrow/Parquet ≥ 23, and nlohmann/json. DIALibGen is
-fetched automatically.
+Needs an installed OpenMS ≥ 3.5, Arrow/Parquet, ONNX Runtime and nlohmann/json;
+`DIALibTune` additionally needs a CXX11-ABI libtorch. DIALibGen is fetched at
+the pinned tag. The conda recipe CI uses, and every option, is in
+[docs/install.md](docs/install.md).
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+      -DDLR_BUILD_FINETUNE=ON -DTorch_DIR=<libtorch>/share/cmake/Torch \
+      -DDLR_PEPTDEEP_ONNX_DIR=<dir with peptdeep_{rt,ccs,ms2}_dynamic.onnx>
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-To build against a local DIALibGen checkout:
-`-DFETCHCONTENT_SOURCE_DIR_DIALIBRARYGENERATOR=../DIALibGen`
+Release bundles (Linux x64/arm64, macOS arm64/x64 — signed, notarized,
+stapled `.dmg`) come from `.github/workflows/ci.yml`; see
+[docs/release.md](docs/release.md).
 
 Note what is **not** a dependency: mzPeak, SQLite, and the extraction stack.
-This tool reads a library and a *results table*, never the raw run. That is what
-keeps it the same shape as DIALibGen rather than a search engine with a
-different `main()`.
+Both tools read a library or a model and a *results table*, never the raw run.
+That is what keeps them the same shape as DIALibGen rather than a search engine
+with a different `main()`.
 
 ## Usage
 
 ```bash
-DIALibraryRefiner \
-  -in  predicted_library.parquet \
-  -ids reference_run_report.parquet \
-  -out refined_library.parquet \
-  -out_report residuals.tsv
+DIALibraryRefiner -in predicted_library.parquet -ids report.parquet \
+                  -out refined_library.parquet -out_report residuals.tsv -write_im
+
+DIALibTune -in report.parquet -model_in models/peptdeep_rt_dynamic.onnx \
+           -out tuned/peptdeep_rt_dynamic.onnx -head rt -filter:rt_max_minutes 30
+DIALibTune -in report.parquet -model_in models/peptdeep_ccs_dynamic.onnx \
+           -out tuned/peptdeep_ccs_dynamic.onnx -head ccs
 ```
 
-`-ids` accepts a DIA-NN `report.parquet`. Every enabled q-value gate must find
-its column there, or the tool refuses — nothing fails open. To refine against a
-DIA-NN *empirical library* (`--gen-spec-lib` output, already filtered, no
-`Global.Q.Value`), pass `-empirical_library`: missing gates are then bypassed
-and each bypass is recorded in the output's provenance. `-write_im` adds the
-mobility replacement for charges ≥ `-im_min_charge` (default 2; z1 is censored
-at the ramp top); `-im_ramp_top` declares the instrument's ramp limit so
-observations at the edge are treated as censored; `-no_filter` turns the filter
-off as a declared arm.
+`-ids` / `-in` is a DIA-NN `report.parquet` of one run. For the refiner, every
+enabled q-value gate must find its column there, or the tool refuses — nothing
+fails open; `-empirical_library` bypasses (and records) the gates a DIA-NN
+`--gen-spec-lib` library does not carry. `-write_im` adds the mobility
+replacement for charges ≥ 2 (z1 is censored at the ramp top); `-im_ramp_top`
+declares the instrument's limit; `-no_filter` turns the filter off as a
+declared arm. For the tuner, `-machine:device cuda:0` uses a GPU;
+`-cohort:train_size` subsamples.
 
-Every run writes `<out>.refine.json` — the recipe, input content hashes, the
-reference run, every rejection count, and the pre-overwrite residuals — and a
-Parquet output carries the same JSON in its schema metadata (`odia.config_json`).
+Every run writes a provenance sidecar — `<out>.refine.json` /
+`<out>.tune.json` — with the recipe, input hashes, the reference run, every
+rejection count and the measured residuals; a Parquet output carries the same
+JSON in its schema metadata (`odia.config_json`).
+[docs/quickstart.md](docs/quickstart.md) walks through both.
 
 ### Modification naming is canonicalised, and this is load-bearing
 
@@ -113,6 +132,8 @@ ODIA/AlphaPeptDeep prediction of the human proteome, 4,991,901 target precursors
 Reference: DIA-NN's `--gen-spec-lib --unimod4` empirical library for the same
 run, 37,193 targets with measured RT and 1/K0.
 
+**Refinement**
+
 | | |
 |---|---|
 | reference precursors matched | **36,574 / 36,574 (100.0%)** |
@@ -125,64 +146,50 @@ The residuals are reported *before* the overwrite, because afterwards they are
 zero by construction and say nothing. They are the measurement the refinement is
 worth.
 
-Both independently reproduce numbers this project had measured by other means:
-an RT residual sd of 8.42 and a 1/K0 residual sd of 0.02848 for the same library
-against the same reference. The 1/K0 mean of −0.0204 against a mean 1/K0 near
-1.0 is the ~2% low bias in predicted mobility, recovered here as a side effect.
+**Fine-tuning** (models tuned on DIA-NN's identifications of the run, 22k / 25k
+training units, protein-level hold-out; error on precursors from proteins the
+models never saw, in the units a library carries):
+
+| | RT calibrated sd (min) | 1/K0 sd, z≥2 |
+|---|---|---|
+| stock AlphaPeptDeep | 0.989 | 0.0180 |
+| **tuned, `DIALibTune`** (full pool, 100 epochs) | **0.318** | **0.0148** |
+| DIA-NN's own post-run refit (in-sample) | 0.352 | 0.0148 |
+
+A full-proteome library from the tuned models, searched with DIA-NN on the same
+run, gave **+8% identifications at matched entrapment budget** over the stock
+models (39,440 vs 35,805 at q ≤ 0.01; entrapment FDP measured and lower). It is
+a **same-run** result; cross-run transfer has not been measured.
+
+The C++ trainer reproduces the Python reference it was ported from — cohorts
+and stock metrics to the printed digit, the 100-epoch result within replicate
+noise — at 1.7× its speed per epoch on the same CPU threads, and is the only
+thing a user needs to run. How accuracy and runtime depend on training-set size
+and on the stopping rule, and the GPU numbers, are in
+[docs/results.md](docs/results.md).
 
 ## Interpreting the output
 
-**The refined library is a per-run object.** Its RT column holds the reference
-run's observed retention times, not iRT — the column's meaning has changed, and
-the tool says so on every run. It is correct for that run and for runs on the
-same gradient, and wrong elsewhere. Cross-run transfer of a per-run RT model has
-not been cleanly measured in this project; treat the output as per-run until it is.
+**Both outputs are per-run objects.** A refined library's RT column holds the
+reference run's observed retention times, not iRT — the column's meaning has
+changed, and the tool says so on every run. A tuned model has the run's
+gradient and the instrument's mobility calibration in its weights. Both are
+correct for that run and for runs acquired the same way, and wrong elsewhere.
 
 **A reconstructed library launders its own false positives.** The authors concede
 this: *"our approach may transfer false positives… FDR estimation to be more
 liberal"*. Any q-value headline measured with a reconstructed library is
 optimistic by construction. Compare at a matched entrapment budget.
 
-## Fine-tuning (`tools/`)
+## Documentation
 
-The paper puts transfer learning *downstream* of reconstruction, trained on the
-reconstructed identifications. That stage lives here as scripts — torch stays
-out of the C++ tool:
-
-| script | does |
-|---|---|
-| `tools/finetune_rt.py` | fine-tune the AlphaPeptDeep RT head on a run's identifications; `--holdout protein` (a sequence split leaks co-eluting siblings) |
-| `tools/finetune_ccs.py` | the same for the CCS head — the first time it has been done in this project; guards peptdeep's silent no-op and excludes censored z1 |
-| `tools/export_finetuned.sh` | any head → the ONNX triplet DIALibGen consumes, with a manifest naming which checkpoint each file came from |
-
-Then point DIALibGen's `rt_model` / `ccs_model` at the exports and regenerate.
-
-**Measured on S08** (Bruker timsTOF diaPASEF, carbamidomethylated; models
-tuned on DIA-NN's own identifications of that run, 26k peptides, protein-level
-holdout). Library accuracy on precursors from proteins the models never saw:
-
-| | RT sd, monotone (min) | 1/K0 sd, z≥2 |
-|---|---|---|
-| DIA-NN raw library | 0.5065 | 0.01602 |
-| ODIA stock | 0.6875 | 0.01796 |
-| **ODIA fine-tuned** | **0.3035** | **0.01475** |
-| DIA-NN post-run-refit (in-sample) | 0.3524 | 0.01480 |
-
-And in a DIA-NN search of the same run, full-proteome libraries from the same
-FASTA and config, differing only in the two ONNX files:
-
-| | q≤0.01 | protein groups | entrapment FDP | at matched entrapment budget |
-|---|---|---|---|---|
-| DIA-NN library-free | 37,334 | 5,033 | 2.67% | — |
-| ODIA library, stock models | 35,805 | 4,907 | 2.34% | parity (±1%) |
-| **ODIA library, fine-tuned** | **39,440** | **5,228** | **2.45%** | **+8%** |
-
-The gain is not error inflation — entrapment FDP is measured and lower — and it
-is not a reordering: 5,932 precursors were found only with the fine-tuned
-library. **It is a same-run result.** The models were tuned on the run they are
-searching; cross-run transfer has not been measured. Treat the +8% as a per-run
-property until it has.
+[install](docs/install.md) · [quickstart](docs/quickstart.md) ·
+[fine-tuning](docs/fine-tuning.md) · [results](docs/results.md) ·
+[conventions](docs/conventions.md) · [release](docs/release.md) ·
+[FAQ](docs/faq.md) · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md)
 
 ## Licence
 
 BSD-3-Clause. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Cite with [CITATION.cff](CITATION.cff); the method is Charkow *et al.* and the
+models are AlphaPeptDeep (Zeng *et al.*, 2022).
