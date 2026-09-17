@@ -37,7 +37,20 @@ same names DIALibGen and the other tools on this team use:
 | `MACOS_TEAM_ID` | the team id |
 | `MACOS_NOTARY_PASSWORD` | an app-specific password for notarization |
 
-Add them through the GitHub web UI. **No key is ever stored in this
+Set them with the premade script, on the Mac that holds the `.p12`:
+
+```bash
+.github/set-macos-secrets.sh okohlbacher/DIALibRefine
+```
+
+It reads the values from one file per secret (default
+`~/Documents/Admin/Software Signing/secrets/`, or `--from-dir`, `--from-env`,
+`--interactive`), checks that the certificate opens with its password and
+carries the identity string, and pushes each value to `gh secret set` on
+stdin — never on a command line, never in a temp file, never on the
+terminal. `--dry-run` does everything but the write. Secrets are write-only
+on GitHub: they cannot be copied from another repository, which is why the
+script exists. The web UI works too. **No key is ever stored in this
 repository or on a build runner**: the workflow imports the certificate into
 an ephemeral keychain and deletes it in an `always()` step.
 
