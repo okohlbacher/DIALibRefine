@@ -3,9 +3,9 @@
 # NOTHING from the build environment, reports ITS OWN version, keeps OpenMS's
 # update check off, and parses its parameters in isolation.
 #
-#   standalone_test.sh <DIALibRefine> <DIALibTune-or-empty> <expected-version>
+#   standalone_test.sh <DIALibRefine> <expected-version>
 set -u
-REFINER="$1"; TUNE="${2:-}"; WANT="$3"
+REFINER="$1"; WANT="$2"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/dlr-standalone.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
@@ -38,5 +38,4 @@ check_tool "$REFINER" DIALibRefine
 run_bare "$REFINER" -in x.parquet -ids y.parquet -out z.parquet -write_config "$TMP/eff.json" > "$TMP/eff.log" 2>&1
 [ -s "$TMP/eff.json" ] || fail "DIALibRefine -write_config wrote nothing"
 grep -q '"schema_version"' "$TMP/eff.json" || fail "effective config has no schema_version"
-[ -n "$TUNE" ] && check_tool "$TUNE" DIALibTune
 echo "PASSED"

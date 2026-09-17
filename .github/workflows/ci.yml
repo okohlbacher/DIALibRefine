@@ -196,11 +196,10 @@ jobs:
         run: |
           set -euo pipefail
           test -x stage/bin/DIALibRefine
-          TUNE=""; if [ "${{ matrix.finetune }}" = ON ]; then test -x stage/bin/DIALibTune; TUNE=stage/bin/DIALibTune; fi
           export OPENMS_DATA_PATH="$CONDA_PREFIX/share/OpenMS"
           export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib"
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
-          bash test/standalone_test.sh stage/bin/DIALibRefine "$TUNE" \
+          bash test/standalone_test.sh stage/bin/DIALibRefine \
             "$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 
       # ---------------------------------------------------------------------
@@ -287,7 +286,7 @@ jobs:
           set -euo pipefail
           mkdir -p stage/lib stage/share/OpenMS
           cp -R "$CONDA_PREFIX/share/OpenMS/." stage/share/OpenMS/
-          BINS="stage/bin/DIALibRefine"; [ "${{ matrix.finetune }}" = ON ] && BINS="$BINS stage/bin/DIALibTune"
+          BINS="stage/bin/DIALibRefine"
           if [ "$RUNNER_OS" = "macOS" ]; then
             copy_closure() {
               otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do
@@ -354,7 +353,7 @@ jobs:
           # fine-tunes: run the bounded e2e from the bare tree.
           if [ "${{ matrix.finetune }}" = ON ]; then
             env -i HOME="$HOME" PATH="$CONDA_PREFIX/bin:/usr/bin:/bin" \
-              bash test/tune_e2e.sh "$PWD/stage/bin/DIALibTune" "$PWD/models" \
+              bash test/tune_e2e.sh "$PWD/stage/bin/DIALibRefine" "$PWD/models" \
                 - "$CONDA_PREFIX/bin/python" \
               || { echo "::error::the staged bundle cannot fine-tune"; exit 1; }
           fi
@@ -392,7 +391,6 @@ jobs:
             xcrun stapler staple "$DMG"
             spctl --assess --type open --context context:primary-signature -vv "$DMG"
             xcrun stapler validate "$DMG"
-            codesign --verify --strict --verbose=2 stage/bin/DIALibTune
           fi
 
       - uses: actions/upload-artifact@v5

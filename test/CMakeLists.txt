@@ -47,29 +47,23 @@ if(TARGET odia_tune)
   else()
     message(STATUS "tune_parity test not registered: set DLR_PEPTDEEP_ONNX_DIR to the stock models")
   endif()
-  if(TARGET DIALibTune)
-    add_test(NAME DIALibTune_help COMMAND DIALibTune --help)
-  endif()
 endif()
 
 # The standalone gates: bare environment, own version, update check off,
 # descriptor export. Cheap, and each has shipped broken past a green build in
 # a sibling project.
 if(TARGET DIALibRefine)
-  if(TARGET DIALibTune)
-    set(_dlr_tune_bin $<TARGET_FILE:DIALibTune>)
-  else()
-    set(_dlr_tune_bin "")
-  endif()
   add_test(NAME standalone
            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/standalone_test.sh
-                   $<TARGET_FILE:DIALibRefine> "${_dlr_tune_bin}" ${PROJECT_VERSION})
+                   $<TARGET_FILE:DIALibRefine> ${PROJECT_VERSION})
   set_tests_properties(standalone PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # End to end: a synthetic report, both heads, bounded (~1 min on 2 threads).
 # Needs the stock models and a python with pyarrow + numpy; skipped otherwise.
-if(TARGET DIALibTune)
+# Gated on odia_tune, because the executable it used to name no longer exists
+# and the stage is what decides whether this can run at all.
+if(TARGET odia_tune AND TARGET DIALibRefine)
   set(DLR_EXAMPLE_FASTA "-" CACHE FILEPATH "A protein FASTA for the synthetic-report test; - = synthetic proteins")
   if(NOT DLR_EXAMPLE_FASTA)
     set(DLR_EXAMPLE_FASTA "-")
@@ -78,7 +72,7 @@ if(TARGET DIALibTune)
   if(DLR_PYTHON AND EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx")
     add_test(NAME tune_e2e
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tune_e2e.sh
-                     $<TARGET_FILE:DIALibTune> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
+                     $<TARGET_FILE:DIALibRefine> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
     set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
   else()
     message(STATUS "tune_e2e test not registered: needs python and DLR_PEPTDEEP_ONNX_DIR")

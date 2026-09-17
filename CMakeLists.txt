@@ -104,7 +104,7 @@ endif()
 # libtorch); the pre-cxx11 zip cannot link against OpenMS and Arrow and is
 # refused below rather than failing at link time with 300 undefined symbols.
 # ---------------------------------------------------------------------------
-option(DLR_BUILD_FINETUNE "Build DIALibTune and the fine-tuning library (needs libtorch)" OFF)
+option(DLR_BUILD_FINETUNE "Build the fine-tuning stage into DIALibRefine (needs libtorch)" OFF)
 set(DLR_LIBTORCH_DIR "" CACHE PATH
     "Link an unpacked libtorch zip DIRECTLY (its include/ and lib/), bypassing TorchConfig.cmake. \
 Use this for a CUDA zip: TorchConfig enables the CUDA language and wants a toolkit that matches \
@@ -167,19 +167,21 @@ if(DLR_BUILD_FINETUNE)
   target_compile_options(odia_tune PUBLIC ${_dlr_torch_flags})
   set_target_properties(odia_tune PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+  # The stage goes INTO DIALibRefine; there is no second executable. The link
+  # stays inside this if(): odia_tune propagates ${TORCH_LIBRARIES} and
+  # TORCH_CXX_FLAGS PUBLIC, so linking it unconditionally would drag libtorch
+  # into the default configuration -- and into linux-arm64, which has no usable
+  # CXX11-ABI build of it at all.
   if(DLR_BUILD_TOOL)
-    add_executable(DIALibTune src/DIALibTune.cpp)
-    target_link_libraries(DIALibTune PRIVATE odia_tune)
-    target_compile_definitions(DIALibTune PRIVATE DLR_VERSION="${PROJECT_VERSION}")
-    if(DLR_INSTALL_TOOLS)
-      install(TARGETS DIALibTune RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    endif()
+    target_link_libraries(DIALibRefine PRIVATE odia_tune)
+    target_compile_definitions(DIALibRefine PRIVATE DLR_WITH_FINETUNE=1)
     # A relocatable binary: libtorch's .so live next to it in ../lib when packaged.
-    set_target_properties(DIALibTune PROPERTIES
+    # These moved from DIALibTune -- DIALibRefine is now the binary that loads them.
+    set_target_properties(DIALibRefine PROPERTIES
       INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN"
       BUILD_WITH_INSTALL_RPATH OFF)
     if(DLR_LIBTORCH_DIR)
-      set_property(TARGET DIALibTune APPEND PROPERTY BUILD_RPATH "${DLR_LIBTORCH_DIR}/lib")
+      set_property(TARGET DIALibRefine APPEND PROPERTY BUILD_RPATH "${DLR_LIBTORCH_DIR}/lib")
     endif()
   endif()
 endif()
