@@ -32,11 +32,14 @@ Requirements:
 - for `DIALibTune`: libtorch, **CXX11 ABI** (the conda-forge `libtorch`
   package, or pytorch.org's `libtorch-shared-with-deps` zip, which has been
   CXX11 since 2.6). The pre-CXX11 zip cannot link against OpenMS and Arrow and
-  is refused at configure time. Two conda combinations are known bad and CI
-  avoids them: on osx-64 the `cpu_mkl` build (conda's MKL 2023.2 pairing
-  computes wrong numbers — take `cpu_generic` with OpenBLAS), and on
-  linux-aarch64 every `cpu_generic` build up to 2.10.0 (segfault in the LSTM
-  dispatcher). The parity test catches both.
+  is refused at configure time. CI takes `cpu_generic` (OpenBLAS) on every
+  platform and no `cpu_mkl` build anywhere: on osx-64 conda's MKL 2023.2
+  pairing computes wrong numbers (the parity test catches it), and on
+  linux-64 MKL `dlopen`s its CPU-dispatch kernels, which no `ldd`-based
+  closure walk can find — an in-place build works, a relocated bundle dies
+  with `Cannot load libmkl_def.so.2`. On linux-aarch64 every `cpu_generic`
+  build up to 2.10.0 segfaults in the LSTM dispatcher, so that platform has
+  no `DIALibTune` at all.
 
 [DIALibGen](https://github.com/okohlbacher/DIALibGen) is fetched at the pinned
 tag (`DLR_DIALIBGEN_TAG`, v0.10.0) unless an installed one is found.
@@ -45,7 +48,7 @@ The conda recipe CI builds with, in one line:
 
 ```bash
 micromamba create -n dialibrefine -c conda-forge -c bioconda openms=3.5.0 onnxruntime-cpp \
-  'libtorch=2.10.0=cpu*' libparquet libarrow-dataset libarrow-acero nlohmann_json xerces-c \
+  'libtorch=2.10.0=cpu_generic*' 'libblas=*=*openblas' libparquet libarrow-dataset libarrow-acero nlohmann_json xerces-c \
   libsvm eigen zlib bzip2 libzip hdf5 libcurl libboost-devel glpk coin-or-cbc coin-or-utils \
   qt6-main cmake ninja cxx-compiler python numpy pyarrow
 ```

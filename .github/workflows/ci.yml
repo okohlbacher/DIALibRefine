@@ -37,13 +37,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `torch` is the libtorch build to solve. macos-x64 must NOT take the
-          # cpu_mkl build: conda's osx-64 MKL is frozen at 2023.2 and the
-          # combination (libmkl_intel_ilp64 + libmkl_intel_thread under llvm's
-          # libomp) computes wrong numbers -- parity vs ONNX Runtime off by 0.25
-          # rt_norm, single-threaded and without oneDNN alike. cpu_generic on
-          # OpenBLAS is exact there.
-          - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu*",         extra: "", finetune: "ON" }
+          # `torch` is the libtorch build to solve. NO leg takes a cpu_mkl
+          # build, for two independent reasons:
+          #  * osx-64: conda's MKL is frozen at 2023.2 and that pairing
+          #    (libmkl_intel_ilp64 + libmkl_intel_thread under llvm's libomp)
+          #    computes WRONG numbers -- parity vs ONNX Runtime off by 0.25
+          #    rt_norm, single-threaded and without oneDNN alike;
+          #  * linux-64: MKL dlopen()s its CPU-dispatch kernels
+          #    (libmkl_def/avx2/avx512/vml_*.so.2), which `ldd` does not name,
+          #    so the portable bundle's closure walk cannot find them and the
+          #    relocated tree dies with "Cannot load libmkl_def.so.2" -- while
+          #    the in-environment tests pass, because there MKL is still on the
+          #    path. Carrying them would add ~500 MB to every bundle.
+          # cpu_generic on OpenBLAS is exact (parity 8.9e-8) and is one .so
+          # with no runtime dispatch, so it bundles.
+          - { name: linux-x64,   runner: ubuntu-24.04,     torch: "libtorch=2.10.0=cpu_generic*", extra: "libblas=*=*openblas", finetune: "ON" }
           # linux-arm64 ships WITHOUT the fine-tuner: conda-forge's aarch64
           # libtorch 2.10.0 (cpu_generic) segfaults inside its own LSTM dispatcher
           # (at::_ops::lstm_input::call), single-threaded and without oneDNN
