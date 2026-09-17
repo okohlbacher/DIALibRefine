@@ -2,7 +2,7 @@
 
 Make a predicted DIA spectral library right for one run, two ways:
 
-- **`DIALibraryRefiner`** — replace predicted retention time and ion mobility
+- **`DIALibRefine`** — replace predicted retention time and ion mobility
   with what the run actually measured, and delete the precursors it never saw
   (the peptide-centric reconstruction of Charkow *et al.*).
 - **`DIALibTune`** — re-train AlphaPeptDeep's RT and CCS models on the run's
@@ -20,7 +20,7 @@ models that predicted it.
 
 ## The method
 
-`DIALibraryRefiner` implements the "peptide-centric library reconstruction"
+`DIALibRefine` implements the "peptide-centric library reconstruction"
 of Charkow, Ghaznavi, Seale, Peng, Gingras & Röst, *Reference-Based Library
 Construction Improves Performance in low-input diaPASEF Workflows*,
 [bioRxiv 10.64898/2026.04.29.721088](https://www.biorxiv.org/content/10.64898/2026.04.29.721088v2).
@@ -90,7 +90,7 @@ with a different `main()`.
 ## Usage
 
 ```bash
-DIALibraryRefiner -in predicted_library.parquet -ids report.parquet \
+DIALibRefine -in predicted_library.parquet -ids report.parquet \
                   -out refined_library.parquet -out_report residuals.tsv -write_im
 
 DIALibTune -in report.parquet -model_in models/peptdeep_rt_dynamic.onnx \

@@ -1,7 +1,7 @@
 # FAQ
 
 **Which of the two tools do I want?**
-`DIALibraryRefiner` corrects the precursors a run identified and removes the
+`DIALibRefine` corrects the precursors a run identified and removes the
 rest — the paper's reconstruction, no model involved. `DIALibTune` re-trains
 the RT and CCS models on those identifications so that *every* predicted
 precursor, including the ones the run never saw, gets the run's RT scale and

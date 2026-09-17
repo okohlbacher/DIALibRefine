@@ -7,7 +7,7 @@ library-free search of that run (`A_libfree.parquet`, 37,334 precursors at
 q ≤ 0.01), models = stock AlphaPeptDeep exports (`peptdeep_rt_dynamic.onnx`
 sha256 3f3b847e…, `peptdeep_ccs_dynamic.onnx` 41816f32…).
 
-## Refinement (`DIALibraryRefiner`, 2026-09-14)
+## Refinement (`DIALibRefine`, 2026-09-14)
 
 Library: ODIA/AlphaPeptDeep prediction of the human proteome, 4,991,901
 target precursors. Reference: DIA-NN's `--gen-spec-lib --unimod4` empirical

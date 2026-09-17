@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Oliver Kohlbacher and the DIALibRefine authors.
 // SPDX-License-Identifier: BSD-3-Clause
 
-/// DIALibraryRefiner: library + reference identifications -> refined library.
+/// DIALibRefine: library + reference identifications -> refined library.
 ///
 /// The counterpart to DIALibGen. That tool predicts a library from a FASTA;
 /// this one replaces those predictions with what a reference run measured, and
@@ -56,11 +56,11 @@ namespace
   json num(double v) { return std::isfinite(v) ? json(v) : json(nullptr); }
 }
 
-class DIALibraryRefiner final : public OpenMS::TOPPBase
+class DIALibRefine final : public OpenMS::TOPPBase
 {
 public:
-  DIALibraryRefiner()
-    : TOPPBase("DIALibraryRefiner",
+  DIALibRefine()
+    : TOPPBase("DIALibRefine",
                "Refine a DIA library against a reference run's identifications.",
                false) {
 #ifdef DLR_VERSION
@@ -261,7 +261,7 @@ protected:
     // Provenance: the recipe, the inputs by content hash, the run, the units and every
     // count above -- embedded in the Parquet and always written as a sidecar (M13).
     json prov = {
-      {"tool", "DIALibraryRefiner"}, {"tool_version", "0.1.0"},
+      {"tool", "DIALibRefine"}, {"tool_version", DLR_VERSION},
       {"config", eff},
       {"inputs", {{"library", std::filesystem::absolute(in).string()}, {"library_sha", ODIA::DIANNLibraryFile::hashFile(in)},
                   {"reference", std::filesystem::absolute(ids).string()}, {"reference_sha", ODIA::DIANNLibraryFile::hashFile(ids)},
@@ -316,7 +316,7 @@ protected:
 int main(int argc, const char** argv)
 {
   dlr::disableUpdateCheckUnlessSet();
-  dlr::ToolHandlerRegistration ttd("DIALibraryRefiner");
-  DIALibraryRefiner tool;
+  dlr::ToolHandlerRegistration ttd("DIALibRefine");
+  DIALibRefine tool;
   return tool.main(argc, argv);
 }

@@ -4,7 +4,7 @@
 
 Every tagged release carries `DIALibRefine-<platform>.tar.gz` for linux-x64,
 linux-arm64, macos-arm64 and macos-x64, and a `.dmg` for the two macOS
-platforms. Each holds `bin/DIALibraryRefiner`, `bin/DIALibTune`, the shared
+platforms. Each holds `bin/DIALibRefine`, `bin/DIALibTune`, the shared
 libraries they need (`lib/`) and OpenMS's data tables (`share/OpenMS/`); they
 run from wherever they are unpacked, with no environment set.
 
@@ -65,7 +65,7 @@ cmake --install build --prefix /where/you/want/it
 `DLR_PEPTDEEP_ONNX_DIR` points at the three stock `peptdeep_*_dynamic.onnx`
 files (DIALibGen's share directory, or OpenMS's `share/OpenMS/models`); it
 enables the parity and end-to-end tests. Without libtorch, leave
-`DLR_BUILD_FINETUNE` off and only `DIALibraryRefiner` is built.
+`DLR_BUILD_FINETUNE` off and only `DIALibRefine` is built.
 
 ### Options
 
@@ -101,11 +101,11 @@ CUDA is unavailable rather than silently falling back.
 ## Checking an install
 
 ```bash
-DIALibraryRefiner --help      # prints "Version: <this tool's version> (OpenMS <version>)"
+DIALibRefine --help      # prints "Version: <this tool's version> (OpenMS <version>)"
 DIALibTune --help
 ```
 
-`test/standalone_test.sh <DIALibraryRefiner> <DIALibTune> <version>` is the
+`test/standalone_test.sh <DIALibRefine> <DIALibTune> <version>` is the
 gate CI runs against the installed tree: both tools start in an empty
 environment, report their own version, keep OpenMS's update check off, and
 export their parameter descriptions.

@@ -19,7 +19,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 else()
   set(DLR_IS_TOP_LEVEL OFF)
 endif()
-option(DLR_BUILD_TOOL  "Build the DIALibraryRefiner executable" ${DLR_IS_TOP_LEVEL})
+option(DLR_BUILD_TOOL  "Build the DIALibRefine executable" ${DLR_IS_TOP_LEVEL})
 option(DLR_BUILD_TESTS "Build the test suite" ${DLR_IS_TOP_LEVEL})
 # Install rules are conditional on DIALibGen being an INSTALLED package. When it
 # is fetched instead, its odia_library target belongs to no export set, and
@@ -82,12 +82,12 @@ target_link_libraries(odia_refine PUBLIC DIALibGen::odia_library)
 set_target_properties(odia_refine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(DLR_BUILD_TOOL)
-  add_executable(DIALibraryRefiner src/DIALibraryRefiner.cpp)
-  target_link_libraries(DIALibraryRefiner PRIVATE
+  add_executable(DIALibRefine src/DIALibRefine.cpp)
+  target_link_libraries(DIALibRefine PRIVATE
     odia_refine nlohmann_json::nlohmann_json)
-  target_compile_definitions(DIALibraryRefiner PRIVATE DLR_VERSION="${PROJECT_VERSION}")
+  target_compile_definitions(DIALibRefine PRIVATE DLR_VERSION="${PROJECT_VERSION}")
   if(DLR_INSTALL_TOOLS)
-    install(TARGETS DIALibraryRefiner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS DIALibRefine RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   endif()
 endif()
 

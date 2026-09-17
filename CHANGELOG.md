@@ -7,7 +7,7 @@ observed RT + observed 1/K0) against a reference run's identifications, and
 fine-tuning of the AlphaPeptDeep RT and CCS models on those identifications.
 
 ### Added
-- `DIALibraryRefiner` TOPP tool and the `odia_refine` library.
+- `DIALibRefine` TOPP tool and the `odia_refine` library.
 - Canonical modification naming, so `C(UniMod:4)` and `C(Carbamidomethyl)` join.
   Measured worth on a carbamidomethylated timsTOF run: 3,444 precursors, which
   is exactly the cysteine-containing population.

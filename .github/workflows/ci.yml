@@ -149,7 +149,14 @@ jobs:
         run: |
           set -euo pipefail
           # A test that is never ADDED does not fail -- it disappears.
-          want="standalone"; [ "${{ matrix.finetune }}" = ON ] && want="$want tune_parity tune_e2e"
+          # Every test the suite registers, not a sample of three. The guards in
+          # test/CMakeLists.txt key on TARGET names, so a renamed target silently
+          # unregisters a whole block and ctest still reports success on what is
+          # left -- which is exactly what a refactor gets wrong.
+          want="canonical_modseq DIALibRefine_help DIALibRefine_write_ini"
+          want="$want config_write_effective config_rejects_unknown_key"
+          want="$want write_intensity_is_refused standalone"
+          [ "${{ matrix.finetune }}" = ON ] && want="$want tune_parity tune_e2e"
           for t in $want; do
             ctest --test-dir build -N | grep -q "$t" \
               || { echo "::error::test $t was not registered"; exit 1; }
@@ -188,12 +195,12 @@ jobs:
         shell: bash -el {0}
         run: |
           set -euo pipefail
-          test -x stage/bin/DIALibraryRefiner
+          test -x stage/bin/DIALibRefine
           TUNE=""; if [ "${{ matrix.finetune }}" = ON ]; then test -x stage/bin/DIALibTune; TUNE=stage/bin/DIALibTune; fi
           export OPENMS_DATA_PATH="$CONDA_PREFIX/share/OpenMS"
           export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib"
           export LD_LIBRARY_PATH="$CONDA_PREFIX/lib"
-          bash test/standalone_test.sh stage/bin/DIALibraryRefiner "$TUNE" \
+          bash test/standalone_test.sh stage/bin/DIALibRefine "$TUNE" \
             "$(sed -n 's/^  VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 
       # ---------------------------------------------------------------------
@@ -280,7 +287,7 @@ jobs:
           set -euo pipefail
           mkdir -p stage/lib stage/share/OpenMS
           cp -R "$CONDA_PREFIX/share/OpenMS/." stage/share/OpenMS/
-          BINS="stage/bin/DIALibraryRefiner"; [ "${{ matrix.finetune }}" = ON ] && BINS="$BINS stage/bin/DIALibTune"
+          BINS="stage/bin/DIALibRefine"; [ "${{ matrix.finetune }}" = ON ] && BINS="$BINS stage/bin/DIALibTune"
           if [ "$RUNNER_OS" = "macOS" ]; then
             copy_closure() {
               otool -L "$1" | tail -n +2 | awk '{print $1}' | while read -r dep; do

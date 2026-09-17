@@ -4,12 +4,12 @@ add_executable(dlr_canonical_modseq canonical_modseq.cpp)
 target_link_libraries(dlr_canonical_modseq PRIVATE odia_refine)
 add_test(NAME canonical_modseq COMMAND dlr_canonical_modseq)
 
-if(TARGET DIALibraryRefiner)
-  add_test(NAME DIALibraryRefiner_help COMMAND DIALibraryRefiner --help)
-  add_test(NAME DIALibraryRefiner_write_ini
-           COMMAND DIALibraryRefiner -write_ini "${CMAKE_CURRENT_BINARY_DIR}/DIALibraryRefiner.ini")
+if(TARGET DIALibRefine)
+  add_test(NAME DIALibRefine_help COMMAND DIALibRefine --help)
+  add_test(NAME DIALibRefine_write_ini
+           COMMAND DIALibRefine -write_ini "${CMAKE_CURRENT_BINARY_DIR}/DIALibRefine.ini")
   add_test(NAME config_write_effective
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet
                    -write_config "${CMAKE_CURRENT_BINARY_DIR}/effective.json")
   set_tests_properties(config_write_effective PROPERTIES
     PASS_REGULAR_EXPRESSION "effective config")
@@ -17,14 +17,14 @@ if(TARGET DIALibraryRefiner)
   # An unknown config key is a typo that would otherwise become a default.
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/typo.json" "{\"q_precursour\": 0.05}\n")
   add_test(NAME config_rejects_unknown_key
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet
                    -config "${CMAKE_CURRENT_BINARY_DIR}/typo.json")
   set_tests_properties(config_rejects_unknown_key PROPERTIES WILL_FAIL TRUE)
 
   # Intensity replacement is measured as a wash by the paper; it must refuse
   # loudly rather than run as a no-op.
   add_test(NAME write_intensity_is_refused
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
   set_tests_properties(write_intensity_is_refused PROPERTIES WILL_FAIL TRUE)
 endif()
 
@@ -55,7 +55,7 @@ endif()
 # The standalone gates: bare environment, own version, update check off,
 # descriptor export. Cheap, and each has shipped broken past a green build in
 # a sibling project.
-if(TARGET DIALibraryRefiner)
+if(TARGET DIALibRefine)
   if(TARGET DIALibTune)
     set(_dlr_tune_bin $<TARGET_FILE:DIALibTune>)
   else()
@@ -63,7 +63,7 @@ if(TARGET DIALibraryRefiner)
   endif()
   add_test(NAME standalone
            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/standalone_test.sh
-                   $<TARGET_FILE:DIALibraryRefiner> "${_dlr_tune_bin}" ${PROJECT_VERSION})
+                   $<TARGET_FILE:DIALibRefine> "${_dlr_tune_bin}" ${PROJECT_VERSION})
   set_tests_properties(standalone PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
