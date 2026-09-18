@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-09-18
 
 First release. Two tools: peptide-centric library reconstruction (filter +
 observed RT + observed 1/K0) against a reference run's identifications, and

@@ -12,7 +12,7 @@ authors:
 repository-code: https://github.com/okohlbacher/DIALibRefine
 license: BSD-3-Clause
 version: 0.1.0
-date-released: 2026-09-17
+date-released: 2026-09-18
 keywords:
   - proteomics
   - data-independent acquisition
