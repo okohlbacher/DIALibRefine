@@ -63,6 +63,22 @@ print(f"ok   {head}: val {key} {s:.4f} -> {t:.4f} in {c['epochs_run']} epochs, {
 PYEOF
 done
 
-# And that the tuning actually reached the library: the provenance records it.
-grep -q '"tune"' "$TMP/refined.tsv.refine.json" || fail "the refine sidecar has no tune section"
+# And that the tuning actually REACHED the library. Not that the stage ran --
+# that it re-predicted precursors. predictRetentionTimes returns what it could
+# NOT do, so a caller reading it as a success count reports 0 when everything
+# worked, and every assertion above still passes.
+"$PY" - "$TMP/refined.tsv.refine.json" <<'PYEOF2' || exit 1
+import json, sys
+p = json.load(open(sys.argv[1]))
+t = p.get("tune") or {}
+def die(m): print("FAIL: " + m, file=sys.stderr); sys.exit(1)
+if not t: die("the refine sidecar has no tune section")
+for head in ("rt", "ccs"):
+    h = t.get(head) or die(f"no {head} section in the tune provenance")
+    if h.get("repredicted", 0) < 1:
+        die(f"{head}: re-predicted {h.get('repredicted')} precursors -- the stage ran and changed nothing")
+    if not h.get("model_sha256") or h["model_sha256"] == h.get("stock_sha256"):
+        die(f"{head}: the tuned model hash equals the stock one")
+print("ok   re-predicted rt=%d ccs=%d precursors" % (t["rt"]["repredicted"], t["ccs"]["repredicted"]))
+PYEOF2
 echo "PASSED"

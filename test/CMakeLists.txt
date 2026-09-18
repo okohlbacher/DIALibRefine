@@ -59,7 +59,12 @@ if(TARGET DIALibRefine)
   set_tests_properties(standalone PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-# End to end: a synthetic report, both heads, bounded (~1 min on 2 threads).
+# End to end: a synthetic run, both heads, then re-prediction and refinement.
+# MEASURED at ~820 s on an idle 224-core node (2 training threads), not the
+# ~1 min the two-executable version took: the merged tool trains both heads in
+# one invocation and then re-predicts the whole library. The timeout is set
+# well clear of that -- at 900 it passed by 17 seconds, which is a flake, and
+# an intermittently red test gets ignored.
 # Needs the stock models and a python with pyarrow + numpy; skipped otherwise.
 # Gated on odia_tune, because the executable it used to name no longer exists
 # and the stage is what decides whether this can run at all.
@@ -73,7 +78,7 @@ if(TARGET odia_tune AND TARGET DIALibRefine)
     add_test(NAME tune_e2e
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tune_e2e.sh
                      $<TARGET_FILE:DIALibRefine> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
-    set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+    set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 2400)
   else()
     message(STATUS "tune_e2e test not registered: needs python and DLR_PEPTDEEP_ONNX_DIR")
   endif()

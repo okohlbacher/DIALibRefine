@@ -380,7 +380,11 @@ protected:
           const ODIA::tune::TuneResult r = run_head(ODIA::tune::HeadKind::RT, "peptdeep_rt_dynamic.onnx");
           writeLogInfo_("tuned RT: " + r.stop_reason + ", best epoch " + std::to_string(r.best_epoch) +
                         " of " + std::to_string(r.epochs_run));
-          const std::size_t n = ODIA::LibraryGenerator::predictRetentionTimes(library, r.model_out, gpu, sessions, free_cys);
+          // predictRetentionTimes returns what it could NOT predict, not what it
+          // did -- undocumented, and it reads exactly the other way round.
+          const std::size_t unpredicted =
+            ODIA::LibraryGenerator::predictRetentionTimes(library, r.model_out, gpu, sessions, free_cys);
+          const std::size_t n = library.precursorCount() - unpredicted;
           // The model emits rt_norm = RT / rt_max_minutes, and that denominator
           // lives nowhere else. Multiplying it back puts the WHOLE library in the
           // reference run's minutes -- the same unit refine() writes for the
@@ -389,8 +393,10 @@ protected:
           tune_prov["rt"] = {{"stop_reason", r.stop_reason}, {"best_epoch", r.best_epoch},
                              {"epochs_run", r.epochs_run}, {"rt_max_minutes", r.rt_max_minutes},
                              {"model_sha256", r.model_out_sha256}, {"stock_sha256", r.model_in_sha256},
-                             {"repredicted", n}};
-          writeLogInfo_("re-predicted RT for " + std::to_string(n) + " precursors, in the run's minutes");
+                             {"repredicted", n}, {"unpredicted", unpredicted}};
+          writeLogInfo_("re-predicted RT for " + std::to_string(n) + " of " + std::to_string(library.precursorCount()) +
+                        " precursors, in the run's minutes" +
+                        (unpredicted ? " (" + std::to_string(unpredicted) + " could not be encoded)" : ""));
         }
         if (want_ccs)
         {
@@ -400,12 +406,16 @@ protected:
           // derive_mobility rewrites the WHOLE 1/K0 column, so it runs only when
           // the CCS head actually tuned -- otherwise a library that arrived with
           // measured mobilities would lose them to stock predictions.
-          const std::size_t n = ODIA::LibraryGenerator::predictCollisionCrossSections(library, r.model_out, gpu, sessions, true);
+          const std::size_t unpredicted =
+            ODIA::LibraryGenerator::predictCollisionCrossSections(library, r.model_out, gpu, sessions, true);
+          const std::size_t n = library.precursorCount() - unpredicted;
           tune_prov["ccs"] = {{"stop_reason", r.stop_reason}, {"best_epoch", r.best_epoch},
                               {"epochs_run", r.epochs_run},
                               {"model_sha256", r.model_out_sha256}, {"stock_sha256", r.model_in_sha256},
-                              {"repredicted", n}};
-          writeLogInfo_("re-predicted CCS and 1/K0 for " + std::to_string(n) + " precursors");
+                              {"repredicted", n}, {"unpredicted", unpredicted}};
+          writeLogInfo_("re-predicted CCS and 1/K0 for " + std::to_string(n) + " of " +
+                        std::to_string(library.precursorCount()) + " precursors" +
+                        (unpredicted ? " (" + std::to_string(unpredicted) + " could not be encoded)" : ""));
         }
 
         tune_prov["models_kept"] = keep.empty() ? json(nullptr) : json(fs::absolute(work).string());
