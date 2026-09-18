@@ -13,7 +13,7 @@ a library's history is one chain of records.
 | tool | sidecar | contents |
 |---|---|---|
 | `DIALibRefine` | `<out>.refine.json` | tool + config as applied, SHA-256 of the library and the reference, the reference run's name, every rejection count, gates bypassed, pre-overwrite residuals per axis (mean, sd, p95), units, the per-run warning |
-| `DIALibTune` | `<out>.tune.json` | tool, libtorch version, device, recipe, stopping rule, filter and rejection counts, cohorts and their rule, SHA-256 of the stock and tuned models, the course of training, stock and tuned metrics on VAL and TEST, `exported` |
+| `DIALibRefine -tune` | `<tune_out_models>/*.tune.json` | tool, libtorch version, device, recipe, stopping rule, filter and rejection counts, cohorts and their rule, SHA-256 of the stock and tuned models, the course of training, stock and tuned metrics on VAL and TEST, `exported` |
 
 The tuned ONNX itself carries **no** embedded record: it is the stock file
 with 21 initializers' bytes replaced, byte-for-byte the same layout, so that
@@ -41,7 +41,7 @@ nested forms such as `K(Label:13C(6)15N(2))` resolve (to `UniMod:259`), and
 counts the tokens it cannot resolve. On S08 the verbatim join dropped exactly
 the cysteine-containing precursors, 9.26 % of the reference.
 
-`DIALibTune` needs no canonicalisation: OpenMS's `AASequence::fromString`
+Fine-tuning needs no canonicalisation: OpenMS's `AASequence::fromString`
 reads the `UniMod:n` form directly, and the encoder is DIALibGen's.
 
 ## Units

@@ -1,14 +1,15 @@
 # FAQ
 
-**Which of the two tools do I want?**
-`DIALibRefine` corrects the precursors a run identified and removes the
-rest — the paper's reconstruction, no model involved. `DIALibTune` re-trains
-the RT and CCS models on those identifications so that *every* predicted
-precursor, including the ones the run never saw, gets the run's RT scale and
-mobility calibration. For a library-based search of the same run, the tuned
-models gave DIA-NN +8 % at matched entrapment budget on S08; the refined
-library is the smaller, faster, higher-specificity object. They compose:
-tune, regenerate, then refine.
+**Do I want `-tune`?**
+Without it, DIALibRefine corrects the precursors a run identified and removes
+the rest — the paper's reconstruction, no model involved. With it, the RT and
+CCS models are re-trained on those identifications and the whole library is
+re-predicted through them, so *every* precursor, including the ones the run
+never saw, gets the run's RT scale and mobility calibration. For a
+library-based search of the same run, the tuned models gave DIA-NN +8 % at
+matched entrapment budget on S08; the reconstruction alone is the smaller,
+faster, higher-specificity object. They compose, which is why they are one
+tool: tuning happens first, the reconstruction is applied to its output.
 
 **Why is the tuned model "per run"? Can I reuse it?**
 The RT model learns the run's gradient and the CCS model the instrument's
@@ -17,9 +18,10 @@ close; on a different gradient the RT model is wrong by construction.
 Cross-run transfer has not been measured here — treat the +8 % as a
 same-run number until it has.
 
-**Why does `DIALibTune` refuse to write a model?**
-Because no checkpoint beat the stock model on the validation cohort. The
-provenance sidecar still records the run. Usual causes: too few
+**Why does a head report that it kept the stock model?**
+Because no checkpoint beat the stock model on the validation cohort, so that
+head's predictions are left alone. The provenance sidecar still records the
+run. Usual causes: too few
 identifications (the cohorts also need ≥ 100 units each), a mislabelled head
 (`-head rt` on a CCS file loads — the shapes match — but learns nothing
 useful), or an `rt_max_minutes` that does not match the gradient.
@@ -38,7 +40,7 @@ same machine, and the default stopping rule ends it around epoch 60–75
 the fastest setting measured on the sweep node, 24–48 were several times
 slower.
 
-**Does `DIALibTune` need Python?**
+**Does `-tune` need Python?**
 No. It is C++ with libtorch; the Python tools under `tools/` are the
 reference implementation kept for reproducing the measurements.
 
@@ -56,5 +58,5 @@ They are measured *before* the overwrite and are the reason the refinement
 is worth doing: afterwards they are zero by construction. Large pre-overwrite
 residuals mean the predicted library was far from the run.
 
-**`--help` prints `Version: 0.1.0 (OpenMS 3.x)` — which is it?**
+**`--help` prints `Version: 0.2.0 (OpenMS 3.x)` — which is it?**
 The tool's version, then the OpenMS it was built against. Report both.

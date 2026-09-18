@@ -4,21 +4,22 @@
 
 Every tagged release carries `DIALibRefine-<platform>.tar.gz` for linux-x64,
 linux-arm64, macos-arm64 and macos-x64, and a `.dmg` for the two macOS
-platforms. Each holds `bin/DIALibRefine`, `bin/DIALibTune`, the shared
-libraries they need (`lib/`) and OpenMS's data tables (`share/OpenMS/`); they
-run from wherever they are unpacked, with no environment set.
+platforms. Each holds `bin/DIALibRefine`, the shared libraries it needs (`lib/`) and
+OpenMS's data tables (`share/OpenMS/`); it runs from wherever it is unpacked,
+with no environment set.
 
 The macOS builds are signed with a Developer ID and notarized; the `.dmg` is
 stapled, so it opens without a network check. Prefer it over the tarball on
 macOS — a tarball cannot carry a notarization ticket, and Gatekeeper then
 inspects every library on first launch.
 
-`DIALibTune` in these bundles is the **CPU** build (libtorch from conda-forge).
-A CUDA build is not released; see below. **The linux-arm64 bundle has no
-`DIALibTune`**: conda-forge's aarch64 libtorch 2.10.0 crashes inside its own
-LSTM dispatcher and newer versions do not co-install with OpenMS 3.5; on
-arm64 Linux build it from source against the libtorch inside the pip `torch`
-wheel (`DLR_LIBTORCH_DIR=<site-packages>/torch`).
+Fine-tuning in these bundles is the **CPU** build (libtorch from
+conda-forge). A CUDA build is not released; see below. **The linux-arm64
+bundle has no `-tune` at all**: conda-forge's aarch64 libtorch 2.10.0 crashes
+inside its own LSTM dispatcher and newer versions do not co-install with
+OpenMS 3.5, so that bundle is built without `DLR_BUILD_FINETUNE` and the flag
+is absent. On arm64 Linux build it from source against the libtorch inside the
+pip `torch` wheel (`DLR_LIBTORCH_DIR=<site-packages>/torch`).
 
 ## From source
 
@@ -29,7 +30,7 @@ Requirements:
   headers and Qt6 its cmake package asks for;
 - Apache Arrow/Parquet (the version OpenMS pins), ONNX Runtime (C++ headers
   and library), nlohmann/json;
-- for `DIALibTune`: libtorch, **CXX11 ABI** (the conda-forge `libtorch`
+- for `-tune`: libtorch, **CXX11 ABI** (the conda-forge `libtorch`
   package, or pytorch.org's `libtorch-shared-with-deps` zip, which has been
   CXX11 since 2.6). The pre-CXX11 zip cannot link against OpenMS and Arrow and
   is refused at configure time. CI takes `cpu_generic` (OpenBLAS) on every
@@ -38,8 +39,8 @@ Requirements:
   linux-64 MKL `dlopen`s its CPU-dispatch kernels, which no `ldd`-based
   closure walk can find — an in-place build works, a relocated bundle dies
   with `Cannot load libmkl_def.so.2`. On linux-aarch64 every `cpu_generic`
-  build up to 2.10.0 segfaults in the LSTM dispatcher, so that platform has
-  no `DIALibTune` at all.
+  build up to 2.10.0 segfaults in the LSTM dispatcher, so that platform is
+  built without fine-tuning.
 
 [DIALibGen](https://github.com/okohlbacher/DIALibGen) is fetched at the pinned
 tag (`DLR_DIALIBGEN_TAG`, v0.10.0) unless an installed one is found.
@@ -76,7 +77,7 @@ enables the parity and end-to-end tests. Without libtorch, leave
 |---|---|---|
 | `DLR_BUILD_TOOL` | ON | build the executables |
 | `DLR_BUILD_TESTS` | ON | build the test suite |
-| `DLR_BUILD_FINETUNE` | OFF | build `DIALibTune` and `odia_tune` (needs libtorch) |
+| `DLR_BUILD_FINETUNE` | OFF | build `-tune` and `odia_tune` into the tool (needs libtorch) |
 | `DLR_LIBTORCH_DIR` | — | link an unpacked libtorch zip directly, bypassing `TorchConfig.cmake` (see CUDA) |
 | `DLR_INSTALL_TOOLS` | ON | install the executables |
 | `DLR_INSTALL` | OFF | install the libraries and headers as a cmake package (needs an *installed* DIALibGen) |
@@ -105,10 +106,9 @@ CUDA is unavailable rather than silently falling back.
 
 ```bash
 DIALibRefine --help      # prints "Version: <this tool's version> (OpenMS <version>)"
-DIALibTune --help
 ```
 
-`test/standalone_test.sh <DIALibRefine> <DIALibTune> <version>` is the
-gate CI runs against the installed tree: both tools start in an empty
-environment, report their own version, keep OpenMS's update check off, and
-export their parameter descriptions.
+`test/standalone_test.sh <DIALibRefine> <version>` is the gate CI runs against
+the installed tree: the tool starts in an empty environment, reports its own
+version, keeps OpenMS's update check off, and exports its parameter
+descriptions.

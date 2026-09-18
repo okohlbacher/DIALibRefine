@@ -50,7 +50,7 @@ Full pool, 100 epochs.
 |---|---|---|---|
 | stock AlphaPeptDeep | 0.989 | 2.635 | 0.0180 |
 | tuned, Python reference (`tools/finetune.py`, sweep `n0_h100`) | 0.3176 | 0.3183 | 0.0148 |
-| tuned, **`DIALibTune`** (H100, seeds 1/2/3) | **0.3175 / 0.3176 / 0.3176** | 0.3176 | see GPU table |
+| tuned, **`-tune`** (H100, seeds 1/2/3) | **0.3175 / 0.3176 / 0.3176** | 0.3176 | see GPU table |
 | DIA-NN's own post-run refit (in-sample) | 0.352 | — | 0.0148 |
 
 The stock RT model's raw sd (2.6 min) is mostly scale — the run's gradient is
@@ -70,7 +70,7 @@ on the same node (dax, 2026-09-17):
 | | best VAL cal. sd | @ epoch | TEST cal. sd | updates | train s | eval s |
 |---|---|---|---|---|---|---|
 | Python (`finetune.py`) | 0.3932 | 91 | 0.3873 | 2,400 | 167 | 83 |
-| C++ (`DIALibTune`) | 0.3914 | 91 | 0.3879 | 2,400 | 98 | 53 |
+| C++ (`-tune`) | 0.3914 | 91 | 0.3879 | 2,400 | 98 | 53 |
 
 The subsample draws differ (numpy vs `std::mt19937`), so this is two draws of
 the same pool; the replicate sd of the held-out metric is 0.004 min. The C++
@@ -145,7 +145,7 @@ matter.
 ## GPU
 
 Node `data` (2× H100 PCIe, driver 580.173, one card shared with another
-user's 69 GB job at 0–2 % utilisation), `DIALibTune` built against libtorch
+user's 69 GB job at 0–2 % utilisation), the tuner built against libtorch
 2.14.0+cu130 with cuDNN 9.26 ([install.md](install.md#cuda)), full pool,
 2026-09-17. `nvidia-smi` sampled every 5 s beside every run; the card used
 sat at 66–68 % mean utilisation (79–85 % peak) and +2.7 GB memory during the

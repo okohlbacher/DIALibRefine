@@ -71,7 +71,7 @@ images).
 
 ## What is not released
 
-- A CUDA build of `DIALibTune` (standard runners have no GPU and the bundle
+- A CUDA build (standard runners have no GPU and the bundle
   would be 500–800 MB). Build it from source with `DLR_LIBTORCH_DIR`
   ([install.md](install.md#cuda)).
 - Windows. DIALibGen's `windows.yml` (OpenMS from source, SignPath) is the
@@ -81,9 +81,9 @@ images).
 ## Verifying a release
 
 ```bash
-tar xzf DIALibRefine-linux-x64.tar.gz -C /tmp/dlr && env -i /tmp/dlr/bin/DIALibTune --help
+tar xzf DIALibRefine-linux-x64.tar.gz -C /tmp/dlr && env -i /tmp/dlr/bin/DIALibRefine --help
 # macOS
 spctl --assess --type open --context context:primary-signature -vv DIALibRefine-macos-arm64.dmg
 xcrun stapler validate DIALibRefine-macos-arm64.dmg
-codesign --verify --strict --verbose=2 /Volumes/DIALibRefine/DIALibRefine/bin/DIALibTune
+codesign --verify --strict --verbose=2 /Volumes/DIALibRefine/DIALibRefine/bin/DIALibRefine
 ```

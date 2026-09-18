@@ -1,8 +1,9 @@
 # Fine-tuning the RT and CCS models on one run
 
-`DIALibTune` re-trains AlphaPeptDeep's retention-time and CCS models on a
-single run's DIA-NN identifications, in C++ with libtorch, and writes the
-result back into the stock ONNX file so that
+`DIALibRefine -tune` re-trains AlphaPeptDeep's retention-time and CCS models
+on a single run's DIA-NN identifications, in C++ with libtorch, re-predicts the
+whole `-in` library through them, and — with `-tune_out_models` — writes the
+tuned weights back into the stock ONNX file so that
 [DIALibGen](https://github.com/okohlbacher/DIALibGen) consumes it unchanged.
 No Python is involved at run time.
 
@@ -178,10 +179,20 @@ only when the machine, not the result, is the constraint.
 ## Running it
 
 ```bash
-DIALibTune -in report.parquet -model_in models/peptdeep_rt_dynamic.onnx \
-           -out tuned/peptdeep_rt_dynamic.onnx -head rt -filter:rt_max_minutes 30
-DIALibTune -in report.parquet -model_in models/peptdeep_ccs_dynamic.onnx \
-           -out tuned/peptdeep_ccs_dynamic.onnx -head ccs
+DIALibRefine -in predicted_library.parquet -ids report.parquet \
+             -out refined_library.parquet \
+             -tune -tune_models models/ -tune_out_models tuned/ \
+             -filter:rt_max_minutes 30
+```
+
+Both heads are trained (`-tune_heads rt` or `ccs` for one), every precursor in
+`-in` is re-predicted through whichever head improved, and the reconstruction
+is applied to the result. `-tune_out_models` also leaves
+`tuned/peptdeep_{rt,ccs}_dynamic.onnx` and their `.tune.json` sidecars behind —
+that directory plus the stock `peptdeep_ms2_dynamic.onnx` is a
+`DIALIBGEN_MODEL_DIR` for generating a fresh library from a FASTA:
+
+```bash
 cp models/peptdeep_ms2_dynamic.onnx tuned/          # MS2 is not tuned
 DIALIBGEN_MODEL_DIR=tuned DIALibGen -in proteome.fasta -out library.parquet
 ```
@@ -197,7 +208,7 @@ setting measured for this model — more threads thrash.
 ## What it refuses
 
 - a multi-run report; a report missing a required column;
-- `-out` equal to `-model_in`;
+- `-tune` without a libtorch build, and `-tune_models` without the stock ONNX;
 - CCS training on charge 1 without `-filter:allow_z1`;
 - an explicit `rt_max_minutes` below the report's maximum RT;
 - fewer than 100 VAL or TEST units;

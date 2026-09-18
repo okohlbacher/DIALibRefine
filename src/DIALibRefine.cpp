@@ -316,7 +316,7 @@ protected:
         if (models.empty())
         { if (const char* e = std::getenv("DIALIBGEN_MODEL_DIR"); e && *e) { models = e; } }
         if (models.empty())
-        { throw std::runtime_error("-tune needs -tune:models (or $DIALIBGEN_MODEL_DIR): the stock peptdeep models to start from"); }
+        { throw std::runtime_error("-tune needs -tune_models (or $DIALIBGEN_MODEL_DIR): the stock peptdeep models to start from"); }
 
         const std::string heads = getStringOption_("tune_heads");
         const bool want_rt = heads != "ccs", want_ccs = heads != "rt";

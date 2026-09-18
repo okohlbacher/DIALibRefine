@@ -9,13 +9,13 @@ is here rather than done.
 - **Provenance inside the tuned ONNX** (`metadata_props`). Deliberately absent
   so the file stays byte-for-byte the stock layout; would need a protobuf
   writer for one message type. The sidecar is the record.
-- **`DIALibTune` on linux-arm64.** conda-forge's aarch64 libtorch 2.10.0
+- **`-tune` on linux-arm64.** conda-forge's aarch64 libtorch 2.10.0
   segfaults in `at::_ops::lstm_input::call` (single-threaded, without oneDNN
   alike) and 2.11+ do not co-install with openms 3.5.0; pytorch.org has no
   aarch64 zip. The pip `torch` wheel's libtorch through `DLR_LIBTORCH_DIR` is
   the untested route (its auditwheel-renamed `libgomp` would sit beside
-  conda's — two OpenMP runtimes). Until then the arm64 Linux bundle ships the
-  refiner only.
+  conda's — two OpenMP runtimes). Until then the arm64 Linux bundle is built without
+  `DLR_BUILD_FINETUNE` and has no `-tune` flag.
 - **Windows.** DIALibGen's `windows.yml` (OpenMS from source, SignPath) is the
   template; libtorch win-64 is a new dependency there.
 - **CUDA bundle.** Built from source only (`DLR_LIBTORCH_DIR`); pytorch.org's

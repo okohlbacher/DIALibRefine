@@ -1,20 +1,21 @@
 # DIALibRefine
 
-Make a predicted DIA spectral library right for one run, two ways:
+Make a predicted DIA spectral library right for one run. One tool, two
+stages, and a library out either way:
 
-- **`DIALibRefine`** — replace predicted retention time and ion mobility
-  with what the run actually measured, and delete the precursors it never saw
-  (the peptide-centric reconstruction of Charkow *et al.*).
-- **`DIALibTune`** — re-train AlphaPeptDeep's RT and CCS models on the run's
-  identifications, in C++ with libtorch, and write them back into the stock
-  ONNX files so that every predicted precursor gets the run's RT scale and
-  mobility calibration. No Python.
+- **Reconstruct** — replace predicted retention time and ion mobility with what
+  the run actually measured, and delete the precursors it never saw (the
+  peptide-centric reconstruction of Charkow *et al.*). This is the default.
+- **`-tune`** — additionally re-train AlphaPeptDeep's RT and CCS models on the
+  run's identifications, in C++ with libtorch, and re-predict the *whole*
+  library through them, so the precursors the run never saw also get the run's
+  RT scale and mobility calibration. No Python.
 
 The counterpart to [DIALibGen](https://github.com/okohlbacher/DIALibGen),
 which predicts a library from a FASTA. This corrects one, and corrects the
 models that predicted it.
 
-> **Status: pre-release (0.1.0).** The config schema and the output contracts
+> **Status: pre-release (0.2.0).** The config schema and the output contracts
 > are not frozen. Everything below is measured; the numbers carry their run
 > and date in [docs/results.md](docs/results.md).
 
@@ -44,7 +45,7 @@ mechanism they name is that OpenSWATH estimates the proportion of nulls in the
 library when computing q-values, so a library that is >98% never-observed
 hypotheses is being scored against a null it invented.
 
-`DIALibTune` is the paper's *downstream* stage — transfer learning on the
+`-tune` is the paper's *downstream* stage — transfer learning on the
 run's identifications — for the precursors the run did not see. It keeps
 AlphaPeptDeep's own fine-tuning recipe, adds protein-level held-out cohorts, a
 measured stopping rule, and a refusal to write a model that did not beat the
@@ -66,7 +67,7 @@ stock one. [docs/fine-tuning.md](docs/fine-tuning.md) is the contract.
 ## Building
 
 Needs an installed OpenMS ≥ 3.5, Arrow/Parquet, ONNX Runtime and nlohmann/json;
-`DIALibTune` additionally needs a CXX11-ABI libtorch. DIALibGen is fetched at
+`-tune` additionally needs a CXX11-ABI libtorch (`-DDLR_BUILD_FINETUNE=ON`). DIALibGen is fetched at
 the pinned tag. The conda recipe CI uses, and every option, is in
 [docs/install.md](docs/install.md).
 
@@ -83,20 +84,22 @@ stapled `.dmg`) come from `.github/workflows/ci.yml`; see
 [docs/release.md](docs/release.md).
 
 Note what is **not** a dependency: mzPeak, SQLite, and the extraction stack.
-Both tools read a library or a model and a *results table*, never the raw run.
-That is what keeps them the same shape as DIALibGen rather than a search engine
-with a different `main()`.
+It reads a library and a *results table*, never the raw run. That is what
+keeps it the same shape as DIALibGen rather than a search engine with a
+different `main()`.
 
 ## Usage
 
 ```bash
+# reconstruct only
 DIALibRefine -in predicted_library.parquet -ids report.parquet \
-                  -out refined_library.parquet -out_report residuals.tsv -write_im
+             -out refined_library.parquet -out_report residuals.tsv -write_im
 
-DIALibTune -in report.parquet -model_in models/peptdeep_rt_dynamic.onnx \
-           -out tuned/peptdeep_rt_dynamic.onnx -head rt -filter:rt_max_minutes 30
-DIALibTune -in report.parquet -model_in models/peptdeep_ccs_dynamic.onnx \
-           -out tuned/peptdeep_ccs_dynamic.onnx -head ccs
+# reconstruct, then fine-tune both heads and re-predict the whole library
+DIALibRefine -in predicted_library.parquet -ids report.parquet \
+             -out refined_library.parquet -write_im \
+             -tune -tune_models models/ -tune_out_models tuned/ \
+             -filter:rt_max_minutes 30
 ```
 
 `-ids` / `-in` is a DIA-NN `report.parquet` of one run. For the refiner, every
@@ -105,8 +108,14 @@ fails open; `-empirical_library` bypasses (and records) the gates a DIA-NN
 `--gen-spec-lib` library does not carry. `-write_im` adds the mobility
 replacement for charges ≥ 2 (z1 is censored at the ramp top); `-im_ramp_top`
 declares the instrument's limit; `-no_filter` turns the filter off as a
-declared arm. For the tuner, `-machine:device cuda:0` uses a GPU;
-`-cohort:train_size` subsamples.
+declared arm.
+
+`-tune` needs `-tune_models` (the directory holding the stock
+`peptdeep_{rt,ccs}_dynamic.onnx`, defaulting to `$DIALIBGEN_MODEL_DIR`); `-tune_heads` picks one head,
+`-tune_out_models` keeps the tuned ONNX and its sidecars, `-tune_predict_gpu`
+runs the re-prediction pass on a GPU. The recipe lives in the `filter:`,
+`cohort:`, `train:`, `stop:` and `machine:` subsections —
+`-machine:device cuda:0` trains on a GPU, `-cohort:train_size` subsamples.
 
 Every run writes a provenance sidecar — `<out>.refine.json` /
 `<out>.tune.json` — with the recipe, input hashes, the reference run, every
@@ -153,7 +162,7 @@ models never saw, in the units a library carries):
 | | RT calibrated sd (min) | 1/K0 sd, z≥2 |
 |---|---|---|
 | stock AlphaPeptDeep | 0.989 | 0.0180 |
-| **tuned, `DIALibTune`** (full pool, 100 epochs) | **0.318** | **0.0148** |
+| **tuned, `-tune`** (full pool, 100 epochs) | **0.318** | **0.0148** |
 | DIA-NN's own post-run refit (in-sample) | 0.352 | 0.0148 |
 
 A full-proteome library from the tuned models, searched with DIA-NN on the same
