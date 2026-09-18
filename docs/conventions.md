@@ -12,7 +12,7 @@ a library's history is one chain of records.
 
 | tool | sidecar | contents |
 |---|---|---|
-| `DIALibraryRefiner` | `<out>.refine.json` | tool + config as applied, SHA-256 of the library and the reference, the reference run's name, every rejection count, gates bypassed, pre-overwrite residuals per axis (mean, sd, p95), units, the per-run warning |
+| `DIALibRefine` | `<out>.refine.json` | tool + config as applied, SHA-256 of the library and the reference, the reference run's name, every rejection count, gates bypassed, pre-overwrite residuals per axis (mean, sd, p95), units, the per-run warning |
 | `DIALibTune` | `<out>.tune.json` | tool, libtorch version, device, recipe, stopping rule, filter and rejection counts, cohorts and their rule, SHA-256 of the stock and tuned models, the course of training, stock and tuned metrics on VAL and TEST, `exported` |
 
 The tuned ONNX itself carries **no** embedded record: it is the stock file
@@ -23,7 +23,7 @@ record; keep it beside the model.
 `schema_version` is 1 in every record and is checked on read where a record
 is read back (`-config`).
 
-## Configuration JSON (`DIALibraryRefiner`)
+## Configuration JSON (`DIALibRefine`)
 
 `-write_config <file>` writes the effective configuration — every option at
 the value the run would use — and `-config <file>` reads one back. Unknown
@@ -35,7 +35,7 @@ output unchanged. Command-line options outrank the file.
 
 DIA-NN writes `C(UniMod:4)`; OpenMS writes `C(Carbamidomethyl)`. They are the
 same modification, and a verbatim join matches neither to the other —
-silently. `DIALibraryRefiner` canonicalises modified sequences to their
+silently. `DIALibRefine` canonicalises modified sequences to their
 UniMod accessions before joining, with balanced-bracket parsing so that
 nested forms such as `K(Label:13C(6)15N(2))` resolve (to `UniMod:259`), and
 counts the tokens it cannot resolve. On S08 the verbatim join dropped exactly

@@ -6,7 +6,7 @@ reference.
 ## 1. Refine a library against the run
 
 ```bash
-DIALibraryRefiner -in predicted_library.parquet -ids report.parquet \
+DIALibRefine -in predicted_library.parquet -ids report.parquet \
                   -out refined_library.parquet -out_report residuals.tsv -write_im
 ```
 

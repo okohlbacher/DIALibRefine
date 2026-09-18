@@ -653,7 +653,7 @@ namespace ODIA::tune
     const bool improved = res.best_epoch > 0 && res.param_l2_change > 0;
 
     nlohmann::json prov = {
-      {"tool", "DIALibTune"}, {"schema_version", 1}, {"head", headName(p.head)}, {"units", ccs ? "1/K0 (model: CCS A^2)" : "minutes (model: rt_norm)"},
+      {"tool", "DIALibRefine"}, {"schema_version", 1}, {"head", headName(p.head)}, {"units", ccs ? "1/K0 (model: CCS A^2)" : "minutes (model: rt_norm)"},
       {"libtorch", TORCH_VERSION}, {"device", p.device}, {"cudnn", p.cudnn},
       {"recipe", {{"loss", "L1"}, {"optimizer", "Adam"}, {"lr", p.lr}, {"betas", {0.9, 0.999}}, {"eps", 1e-8}, {"weight_decay", 0.0}, {"clip_grad_norm", 1.0},
                   {"batch_size", p.batch_size}, {"epochs", p.epochs}, {"warmup", p.warmup}, {"schedule", "linear warmup then cosine, stepped per epoch"}, {"dropout", 0.1}, {"seed", p.seed}}},

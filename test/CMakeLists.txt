@@ -4,12 +4,12 @@ add_executable(dlr_canonical_modseq canonical_modseq.cpp)
 target_link_libraries(dlr_canonical_modseq PRIVATE odia_refine)
 add_test(NAME canonical_modseq COMMAND dlr_canonical_modseq)
 
-if(TARGET DIALibraryRefiner)
-  add_test(NAME DIALibraryRefiner_help COMMAND DIALibraryRefiner --help)
-  add_test(NAME DIALibraryRefiner_write_ini
-           COMMAND DIALibraryRefiner -write_ini "${CMAKE_CURRENT_BINARY_DIR}/DIALibraryRefiner.ini")
+if(TARGET DIALibRefine)
+  add_test(NAME DIALibRefine_help COMMAND DIALibRefine --help)
+  add_test(NAME DIALibRefine_write_ini
+           COMMAND DIALibRefine -write_ini "${CMAKE_CURRENT_BINARY_DIR}/DIALibRefine.ini")
   add_test(NAME config_write_effective
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet
                    -write_config "${CMAKE_CURRENT_BINARY_DIR}/effective.json")
   set_tests_properties(config_write_effective PROPERTIES
     PASS_REGULAR_EXPRESSION "effective config")
@@ -17,14 +17,14 @@ if(TARGET DIALibraryRefiner)
   # An unknown config key is a typo that would otherwise become a default.
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/typo.json" "{\"q_precursour\": 0.05}\n")
   add_test(NAME config_rejects_unknown_key
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet
                    -config "${CMAKE_CURRENT_BINARY_DIR}/typo.json")
   set_tests_properties(config_rejects_unknown_key PROPERTIES WILL_FAIL TRUE)
 
   # Intensity replacement is measured as a wash by the paper; it must refuse
   # loudly rather than run as a no-op.
   add_test(NAME write_intensity_is_refused
-           COMMAND DIALibraryRefiner -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
+           COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
   set_tests_properties(write_intensity_is_refused PROPERTIES WILL_FAIL TRUE)
 endif()
 
@@ -47,29 +47,28 @@ if(TARGET odia_tune)
   else()
     message(STATUS "tune_parity test not registered: set DLR_PEPTDEEP_ONNX_DIR to the stock models")
   endif()
-  if(TARGET DIALibTune)
-    add_test(NAME DIALibTune_help COMMAND DIALibTune --help)
-  endif()
 endif()
 
 # The standalone gates: bare environment, own version, update check off,
 # descriptor export. Cheap, and each has shipped broken past a green build in
 # a sibling project.
-if(TARGET DIALibraryRefiner)
-  if(TARGET DIALibTune)
-    set(_dlr_tune_bin $<TARGET_FILE:DIALibTune>)
-  else()
-    set(_dlr_tune_bin "")
-  endif()
+if(TARGET DIALibRefine)
   add_test(NAME standalone
            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/standalone_test.sh
-                   $<TARGET_FILE:DIALibraryRefiner> "${_dlr_tune_bin}" ${PROJECT_VERSION})
+                   $<TARGET_FILE:DIALibRefine> ${PROJECT_VERSION})
   set_tests_properties(standalone PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
-# End to end: a synthetic report, both heads, bounded (~1 min on 2 threads).
+# End to end: a synthetic run, both heads, then re-prediction and refinement.
+# MEASURED at ~820 s on an idle 224-core node (2 training threads), not the
+# ~1 min the two-executable version took: the merged tool trains both heads in
+# one invocation and then re-predicts the whole library. The timeout is set
+# well clear of that -- at 900 it passed by 17 seconds, which is a flake, and
+# an intermittently red test gets ignored.
 # Needs the stock models and a python with pyarrow + numpy; skipped otherwise.
-if(TARGET DIALibTune)
+# Gated on odia_tune, because the executable it used to name no longer exists
+# and the stage is what decides whether this can run at all.
+if(TARGET odia_tune AND TARGET DIALibRefine)
   set(DLR_EXAMPLE_FASTA "-" CACHE FILEPATH "A protein FASTA for the synthetic-report test; - = synthetic proteins")
   if(NOT DLR_EXAMPLE_FASTA)
     set(DLR_EXAMPLE_FASTA "-")
@@ -78,8 +77,8 @@ if(TARGET DIALibTune)
   if(DLR_PYTHON AND EXISTS "${DLR_PEPTDEEP_ONNX_DIR}/peptdeep_rt_dynamic.onnx")
     add_test(NAME tune_e2e
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tune_e2e.sh
-                     $<TARGET_FILE:DIALibTune> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
-    set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+                     $<TARGET_FILE:DIALibRefine> "${DLR_PEPTDEEP_ONNX_DIR}" "${DLR_EXAMPLE_FASTA}" "${DLR_PYTHON}")
+    set_tests_properties(tune_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 2400)
   else()
     message(STATUS "tune_e2e test not registered: needs python and DLR_PEPTDEEP_ONNX_DIR")
   endif()

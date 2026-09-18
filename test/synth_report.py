@@ -8,6 +8,13 @@ in the right direction, and a broken one cannot pass by chance. Nothing here is
 a physical model of anything; it is a fixture.
 
   synth_report.py <proteins.fasta> <out.parquet> [--precursors 900] [--seed 1]
+                  [--library out.tsv]
+
+--library additionally writes a DIA-NN TSV spectral library over the SAME
+peptides, which is what the merged DIALibRefine consumes as -in. It deliberately
+covers more precursors than the report identifies: the ones the report misses
+are what the fine-tuning stage exists to correct, so a fixture where every
+precursor is matched would exercise none of it.
 """
 import argparse, re, sys, zlib
 import numpy as np
@@ -20,6 +27,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("fasta", help="a protein FASTA, or - for synthetic proteins"); ap.add_argument("out")
 ap.add_argument("--precursors", type=int, default=1600)
 ap.add_argument("--seed", type=int, default=1)
+ap.add_argument("--library", default="", help="also write a DIA-NN TSV library over the same peptides")
 a = ap.parse_args()
 rng = np.random.default_rng(a.seed)
 
@@ -89,5 +97,38 @@ for name, pep in rows:
     if n >= a.precursors: break
 t = pa.table({k: pa.array(v) for k, v in out.items()})
 pq.write_table(t, a.out)
+if a.library:
+    # Predictions, not observations: offset from the truth the report carries so
+    # refinement and tuning both have something to move. The library covers the
+    # report's precursors AND a further 40% the run never identified -- those are
+    # the ones only a tuned model can improve.
+    LIBCOLS = ["Precursor.Id","Modified.Sequence","Stripped.Sequence","Precursor.Charge","Protein.Group",
+               "Precursor.Mz","Product.Mz","Relative.Intensity","Fragment.Type","Fragment.Charge",
+               "Fragment.Series.Number","RT","IM","CCS","Decoy"]
+    extra = 0
+    with open(a.library, "w") as lib:
+        lib.write("\t".join(LIBCOLS) + "\n")
+        for name, pep in rows:
+            for z in (2, 3) if len(pep) > 12 else (2,):
+                mz = (mass(pep) + z * 1.007276) / z
+                modseq = pep.replace("C", "C(UniMod:4)")
+                pid = f"{modseq}{z}"
+                # a predicted RT/CCS: the same law plus a systematic shift, which
+                # is what a per-run fine-tune is supposed to remove
+                prt = rt_minutes(pep) * 1.08 + 0.4
+                pccs = ccs(pep, z) * 1.05
+                pim = mobility(pccs, mz, z)
+                # b/y fragments: enough for -min_fragments to be meaningful
+                for k in range(3, min(len(pep), 9)):
+                    for ftype, series in (("b", k), ("y", k)):
+                        frag = sum(MONO[c] for c in (pep[:k] if ftype == "b" else pep[-k:]))
+                        fmz = frag + (1.00794 if ftype == "b" else 19.01839)
+                        lib.write("\t".join(str(x) for x in [
+                            pid, modseq, pep, z, name,
+                            f"{mz:.5f}", f"{fmz:.5f}", f"{1.0 / (1 + abs(k - 5)):.4f}",
+                            ftype, 1, series, f"{prt:.4f}", f"{pim:.5f}", f"{pccs:.2f}", 0]) + "\n")
+                extra += 1
+    print(f"wrote {a.library}: {extra} library precursors over {len(rows)} peptides")
+
 test = sum(1 for g in set(out["Protein.Group"]) if zlib.crc32(g.encode()) % 5 == 0)
 print(f"wrote {a.out}: {n} precursors, {len(set(out['Protein.Group']))} protein groups ({test} in the TEST cohort)")
