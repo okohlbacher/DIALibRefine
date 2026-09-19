@@ -514,10 +514,20 @@ namespace ODIA::tune
     if (n_train == 0) { throw std::runtime_error("training set is empty (pool " + std::to_string(pool.size()) + ")"); }
     for (std::size_t k = 0; k < n_train; ++k) { d.units[pool[k]].training = true; }
     res.training = n_train;
+    if (p.full_fit)
+    {
+      if (p.train_size || p.train_frac > 0)
+      { throw std::runtime_error("cohort:full_fit trains on every unit; it cannot be combined with cohort:train_size or cohort:train_frac"); }
+      for (auto& u : d.units) { u.training = true; }
+      res.training = d.units.size();
+    }
     for (auto& u : d.units) { u.used = u.training || u.cohort == Unit::Test || u.cohort == val_cohort; }
     log << "cohorts: test " << res.test << " (protein-held-out), val " << res.val << (p.inner_val ? " (protein-held-out)" : " (= TEST: selection is optimistic, TEST is no longer held out)")
         << ", pool " << res.pool << ", training " << res.training << (p.train_size || p.train_frac > 0 ? " (subsample, seed " + std::to_string(p.seed) + ")" : " (full pool)")
         << (ccs ? "" : ", rt_norm = RT / " + std::to_string(d.rt_max_minutes)) << "\n";
+    if (p.full_fit)
+    { log << "FULL FIT: every unit trains, the test and validation cohorts included. Every val and TEST number below is "
+             "IN-SAMPLE and says nothing about generalisation; the held-out check for this mode is a search of a DIFFERENT run.\n"; }
 
     // model
     OnnxFile onnx = OnnxFile::read(p.model_in);
@@ -662,7 +672,7 @@ namespace ODIA::tune
       {"filter", {{"q_value", p.q_value}, {"min_charge", ccs ? p.min_charge : 1}, {"allow_z1", p.allow_z1}, {"rt_spread_max", p.rt_spread_max}, {"rt_max_minutes", d.rt_max_minutes}}},
       {"inputs", {{"report", p.report}, {"run", d.run}, {"rows", d.rows}, {"model_in", p.model_in}, {"model_in_sha256", res.model_in_sha256}}},
       {"cohorts", {{"observations", res.observations}, {"units", res.units}, {"test", res.test}, {"val", res.val}, {"val_is_test", res.val_is_test}, {"pool", res.pool}, {"training", res.training},
-                   {"train_size", p.train_size}, {"train_frac", p.train_frac}, {"rule", "test = crc32(pg)%5==0; val = crc32('val:'+pg)%7==0 of the rest; training = seeded shuffle prefix of the pool"},
+                   {"train_size", p.train_size}, {"train_frac", p.train_frac}, {"full_fit", p.full_fit}, {"rule", "test = crc32(pg)%5==0; val = crc32('val:'+pg)%7==0 of the rest; training = seeded shuffle prefix of the pool"},
                    {"rejected", d.rejected.json()}}},
       {"course", {{"epochs_run", res.epochs_run}, {"best_epoch", res.best_epoch}, {"updates", res.updates}, {"train_rows_per_epoch", train_rows}, {"encoded_units", encoded},
                   {"train_seconds", res.train_seconds}, {"eval_seconds", res.eval_seconds}, {"stop_reason", res.stop_reason}, {"param_l2_change", res.param_l2_change}, {"exported", improved}}},

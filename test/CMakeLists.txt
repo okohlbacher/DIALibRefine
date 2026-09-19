@@ -4,6 +4,13 @@ add_executable(dlr_canonical_modseq canonical_modseq.cpp)
 target_link_libraries(dlr_canonical_modseq PRIVATE odia_refine)
 add_test(NAME canonical_modseq COMMAND dlr_canonical_modseq)
 
+# Intensity replacement, built from a Library made in the test itself. The case
+# that earns its keep is the shifted fragment numbering: identities still agree,
+# every counter looks healthy, and only the m/z cross-check notices.
+add_executable(dlr_intensity_match intensity_match.cpp)
+target_link_libraries(dlr_intensity_match PRIVATE odia_refine)
+add_test(NAME intensity_match COMMAND dlr_intensity_match)
+
 if(TARGET DIALibRefine)
   add_test(NAME DIALibRefine_help COMMAND DIALibRefine --help)
   add_test(NAME DIALibRefine_write_ini
@@ -21,11 +28,11 @@ if(TARGET DIALibRefine)
                    -config "${CMAKE_CURRENT_BINARY_DIR}/typo.json")
   set_tests_properties(config_rejects_unknown_key PROPERTIES WILL_FAIL TRUE)
 
-  # Intensity replacement is measured as a wash by the paper; it must refuse
-  # loudly rather than run as a no-op.
-  add_test(NAME write_intensity_is_refused
+  # -write_intensity against a reference with no fragment columns must refuse:
+  # degrading to an RT-only refinement would pass for the treatment arm.
+  add_test(NAME write_intensity_needs_inputs
            COMMAND DIALibRefine -in x.parquet -ids y.parquet -out z.parquet -write_intensity)
-  set_tests_properties(write_intensity_is_refused PROPERTIES WILL_FAIL TRUE)
+  set_tests_properties(write_intensity_needs_inputs PROPERTIES WILL_FAIL TRUE)
 endif()
 
 # The fine-tuner rests on two things that are checked against the stock ONNX
