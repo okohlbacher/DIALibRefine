@@ -20,6 +20,15 @@
 /// is a property of the RUN and has no static-column representation in a
 /// library. The paper does not correct it either.
 ///
+/// **Fragment intensities are replaced only on request, and never blindly.**
+/// Until 0.3.0 `-write_intensity` was refused, on the paper's measurement that
+/// intensity replacement is a wash. On K562 diaPASEF (DIA-NN 2.0, three
+/// replicates) the matched pair said otherwise: DIA-NN refining its OWN library
+/// against a run -- which does replace intensities -- reached 8,586 protein
+/// groups where this tool's reconstruction, identical in every other respect we
+/// could name, reached 7,703. So it is implemented, behind an m/z cross-check
+/// that turns a silent mismatch into an error.
+///
 /// **Nothing fails open.** Revised after the 2026-09-16 review: a gate whose
 /// column is missing is an ERROR unless the caller declares the input a
 /// pre-filtered empirical library, an unparseable q-value rejects its row rather
@@ -52,6 +61,32 @@ namespace ODIA
   /// through verbatim and, when @p unknown is given, counted there.
   std::string canonicalModifiedSequence(std::string_view seq, std::size_t* unknown = nullptr);
 
+  /// One fragment as the reference REPORT describes it, parsed from the
+  /// positionally corresponding entries of Fragment.Info, Fragment.Quant.Raw
+  /// and Fragment.Correlations.
+  struct ObservedFragment
+  {
+    FragmentType type = FragmentType::Unknown;
+    std::uint8_t ordinal = 0;
+    std::int8_t charge = 0;       ///< always positive; anything else is an unparseable token
+    double mz = 0.0;              ///< the report's own fragment m/z, used ONLY as a cross-check
+    float quant = 0.0f;           ///< Fragment.Quant.Raw: an integrated area from ONE run
+    float correlation = std::numeric_limits<float>::quiet_NaN();   ///< may be 0 or negative; NaN = column absent
+  };
+
+  /// Parse one report row's fragment triple, e.g.
+  ///   info  "b9^1/668.3726196;y7^1/659.3471069;"
+  ///   quant "367.0187988;79.00454712;"
+  ///   corr  "0.7308319807;0.559844017;"
+  ///
+  /// Returns false, writing nothing, when the lists disagree in length: the
+  /// columns are then not positionally paired and every value parsed from them
+  /// would land on the wrong fragment. An unparseable TOKEN is skipped and
+  /// counted in @p bad_tokens; a length disagreement is a ROW failure. An empty
+  /// @p corr means the column is absent and every correlation is NaN.
+  bool parseFragmentInfo(std::string_view info, std::string_view quant, std::string_view corr,
+                         std::vector<ObservedFragment>& out, std::size_t* bad_tokens = nullptr);
+
   /// One reference observation of one precursor.
   struct Observation
   {
@@ -61,6 +96,12 @@ namespace ODIA
     float pep = 1.0f;                                     ///< posterior error probability, when present
     float evidence = 0.0f;                                ///< search discriminant, when present
     std::uint32_t fragments = 0;                          ///< DISTINCT fragment identities among passing rows; 0 = unknown
+    /// Empty unless intensities are being written. Lives HERE, not in a side
+    /// map, so that deduplication replaces RT, 1/K0 and the fragment vector
+    /// together: a precursor's intensities and its retention time must come from
+    /// the same elution event, and splitting them is the one way this feature
+    /// can be silently, plausibly wrong.
+    std::vector<ObservedFragment> frags;
   };
 
   struct RefineParams
@@ -94,7 +135,63 @@ namespace ODIA
 
     bool write_rt = true;
     bool write_im = false;          ///< opt-in; see the warning in refine()
-    bool write_intensity = false;   ///< not implemented; refused loudly
+    /// Replace predicted fragment intensities with the reference run's observed
+    /// ones. Needs Fragment.Info and Fragment.Quant.Raw in -ids, which DIA-NN
+    /// writes only under --report-lib-info.
+    bool write_intensity = false;
+
+    /// A fragment is TRUSTED when quant > 0 and correlation > this. The default
+    /// asks only that the fragment's extracted profile co-elutes with the
+    /// precursor at all: an anti-correlated one is interference, and writing its
+    /// area in teaches the next search to expect that interference. <= -1
+    /// disables the test (quant > 0 only) -- the arm that separates "different
+    /// values" from "fewer transitions".
+    double intensity_min_correlation = 0.0;
+
+    /// true:  a replaced precursor is RESTRICTED to its trusted transitions.
+    /// false: a precursor is replaced only when EVERY one of its transitions is
+    ///        trusted, otherwise it keeps its predictions whole. Transition
+    ///        counts are then identical to the input, so a benchmark delta is
+    ///        attributable to the VALUES alone.
+    bool intensity_restrict = true;
+
+    /// Re-sort a replaced precursor's transitions by descending intensity.
+    bool intensity_rerank = true;
+
+    /// A replaced precursor keeps at least this many transitions or keeps its
+    /// predictions whole. 3 is the bar DIALibGen's digest and decoy stages hold.
+    std::size_t intensity_min_fragments = 3;
+
+    /// How an observed area becomes a library intensity.
+    ///
+    /// LibraryMax is the default because base peak = 1 is NOT an invariant of
+    /// these libraries: measured on 300,000 precursors of a DIALibGen 0.10.1
+    /// library, 89.7% carry a maximum of 1.0 and the rest as little as 0.04,
+    /// since the fragment m/z window and the top-N cut can both exclude the true
+    /// base peak. Scaling the observed vector so its maximum equals the maximum
+    /// that precursor ALREADY held preserves whatever convention each one has,
+    /// and is the only choice that cannot introduce a second scale.
+    enum class IntensityNorm { LibraryMax, BasePeak, Sum, Raw };
+    IntensityNorm intensity_norm = IntensityNorm::LibraryMax;
+
+    /// Drop a normalised value below this fraction of the kept set's maximum.
+    /// Weaker than the generator's floor on purpose: that one is relative to the
+    /// full model spectrum's peak, which does not exist here.
+    double intensity_min_relative = 1e-4;
+
+    /// A match counts only when the report's fragment m/z agrees with the
+    /// library's. THIS is what catches a mis-parse, a different ordinal
+    /// convention, and an -in that is not the library the run was searched
+    /// against -- every other counter looks healthy in all three cases.
+    double intensity_mz_tol_ppm = 20.0;
+
+    /// Refuse when more than this fraction of candidate matches fail that check.
+    /// 1.0 surveys a suspect pairing without failing.
+    double intensity_max_mz_mismatch = 0.01;
+
+    /// -write_intensity with the filter off leaves two intensity provenances in
+    /// one file. Refused unless this is set, as rt_unit=minmax is.
+    bool allow_mixed_intensity = false;
 
     enum class RtUnit
     {
@@ -171,6 +268,33 @@ namespace ODIA
 
     /// matched / ids_passing. Reported always; enforced against min_match_fraction.
     double match_fraction = 0.0;
+
+    // Intensity replacement. Every rejection has its own counter, so the gates'
+    // effect is REPORTED rather than inferred from a total.
+    std::size_t intensity_candidate_precursors = 0;   ///< matched targets whose observation carried fragments
+    std::size_t intensity_candidate_transitions = 0;  ///< library transitions of those candidates: what the four fates below must sum to
+    std::size_t intensity_replaced_precursors = 0;    ///< targets that received observed values
+    std::size_t intensity_replaced_decoys = 0;
+    std::size_t intensity_kept_predicted = 0;         ///< candidates that kept their predictions whole
+    std::size_t intensity_decoy_asymmetry = 0;        ///< reverted because a decoy would have fallen below the bar
+    std::size_t intensity_duplicate_key = 0;          ///< more than one TARGET on a key: skipped, not guessed
+    std::size_t intensity_matched_transitions = 0;    ///< identity AND m/z agreed
+    std::size_t intensity_mz_mismatch = 0;            ///< identity agreed, m/z did not
+    std::size_t intensity_unmatched_in_library = 0;   ///< library transition the report does not list
+    std::size_t intensity_loss_bearing = 0;           ///< neutral-loss transition: the report cannot describe it
+    std::size_t intensity_observed_not_in_library = 0;///< report fragment the library never carried: NEVER added
+    std::size_t intensity_gated_zero_quant = 0;
+    std::size_t intensity_gated_correlation = 0;
+    std::size_t intensity_gated_floor = 0;
+    std::size_t intensity_bad_tokens = 0;
+    std::size_t intensity_row_length_mismatch = 0;    ///< the three fragment columns disagreed in length
+    double intensity_mz_mismatch_fraction = 0.0;
+    /// Fraction of replaced precursors whose observed base peak was already the
+    /// library's top-ranked transition. Near 1 means replacement is close to a
+    /// no-op on this data -- the measurement the old refusal cited a paper for.
+    double intensity_rank_agreement = std::numeric_limits<double>::quiet_NaN();
+    double intensity_transitions_before = std::numeric_limits<double>::quiet_NaN();   ///< mean, replaced precursors
+    double intensity_transitions_after = std::numeric_limits<double>::quiet_NaN();
   };
 
   class LibraryRefiner

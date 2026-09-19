@@ -49,6 +49,16 @@ namespace ODIA::tune
     std::size_t train_size = 0;  ///< 0 = full pool
     double train_frac = 0;       ///< alternative to train_size
     bool inner_val = true;       ///< false: validation = TEST (selection is then optimistic and TEST is no longer held out)
+    /// Train on EVERY unit of the run, the test and validation cohorts included.
+    ///
+    /// This is fitting the run as closely as the data allows, and it destroys
+    /// the tool's own generalisation numbers: val and TEST are then in-sample
+    /// and only ever improve. It exists because the honest check for a per-run
+    /// model is not a held-out protein cohort of the same run but a SEARCH OF A
+    /// DIFFERENT RUN -- measured on K562 diaPASEF, a library tuned on its own run
+    /// found 15,219 new precursors there and one tuned on a sibling run 19,996.
+    /// Off by default, and the sidecar says when it was on.
+    bool full_fit = false;
     // recipe
     int epochs = 100;
     int warmup = 10;
