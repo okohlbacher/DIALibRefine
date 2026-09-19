@@ -163,7 +163,7 @@ jobs:
           # left -- which is exactly what a refactor gets wrong.
           want="canonical_modseq DIALibRefine_help DIALibRefine_write_ini"
           want="$want config_write_effective config_rejects_unknown_key"
-          want="$want write_intensity_is_refused standalone"
+          want="$want write_intensity_needs_inputs intensity_match standalone"
           [ "${{ matrix.finetune }}" = ON ] && want="$want tune_parity tune_e2e"
           for t in $want; do
             ctest --test-dir build -N | grep -q "$t" \

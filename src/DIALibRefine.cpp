@@ -49,6 +49,27 @@ namespace
 {
   const char* rtUnitName(ODIA::RefineParams::RtUnit u)
   { return u == ODIA::RefineParams::RtUnit::MinMax ? "minmax" : "observed"; }
+  const char* intensityNormName(ODIA::RefineParams::IntensityNorm n)
+  {
+    switch (n)
+    {
+      case ODIA::RefineParams::IntensityNorm::BasePeak: return "base_peak";
+      case ODIA::RefineParams::IntensityNorm::Sum: return "sum";
+      case ODIA::RefineParams::IntensityNorm::Raw: return "raw";
+      case ODIA::RefineParams::IntensityNorm::LibraryMax: break;
+    }
+    return "library_max";
+  }
+
+  ODIA::RefineParams::IntensityNorm intensityNormFrom(const std::string& s)
+  {
+    if (s == "library_max") { return ODIA::RefineParams::IntensityNorm::LibraryMax; }
+    if (s == "base_peak") { return ODIA::RefineParams::IntensityNorm::BasePeak; }
+    if (s == "sum") { return ODIA::RefineParams::IntensityNorm::Sum; }
+    if (s == "raw") { return ODIA::RefineParams::IntensityNorm::Raw; }
+    throw std::runtime_error("intensity_norm must be library_max, base_peak, sum or raw; got '" + s + "'");
+  }
+
   const char* dedupName(ODIA::RefineParams::Dedup d)
   { return d == ODIA::RefineParams::Dedup::HighestEvidence ? "highest_evidence" : "lowest_q"; }
 
@@ -65,7 +86,15 @@ namespace
       {"dedup", dedupName(p.dedup)},
       {"im_min_charge", p.im_min_charge},
       {"im_ramp_top", p.im_ramp_top}, {"im_ramp_margin", p.im_ramp_margin},
-      {"min_match_fraction", p.min_match_fraction}};
+      {"min_match_fraction", p.min_match_fraction},
+      {"intensity_min_correlation", p.intensity_min_correlation},
+      {"intensity_restrict", p.intensity_restrict}, {"intensity_rerank", p.intensity_rerank},
+      {"intensity_min_fragments", p.intensity_min_fragments},
+      {"intensity_norm", intensityNormName(p.intensity_norm)},
+      {"intensity_min_relative", p.intensity_min_relative},
+      {"intensity_mz_tol_ppm", p.intensity_mz_tol_ppm},
+      {"intensity_max_mz_mismatch", p.intensity_max_mz_mismatch},
+      {"allow_mixed_intensity", p.allow_mixed_intensity}};
   }
 
   double nanOrValue(double v) { return v; }   // JSON: NaN serialises as null below
@@ -117,7 +146,28 @@ protected:
                                        "this, a missing gate column is an error.");
     registerFlag_("write_im", "Also overwrite 1/K0 with the observed value for charges >= -im_min_charge. OFF by "
                               "default: a library-side mobility rewrite once measured -34.7% end to end in ODIA.");
-    registerFlag_("write_intensity", "Overwrite fragment intensities. NOT IMPLEMENTED; refused.");
+    registerFlag_("write_intensity", "Replace predicted fragment intensities with the reference run's observed ones. "
+                                     "Needs Fragment.Info and Fragment.Quant.Raw in -ids, which DIA-NN writes only with "
+                                     "--report-lib-info. Every match is cross-checked on fragment m/z, and a run that "
+                                     "replaces nothing is an error.");
+    registerDoubleOption_("intensity_min_correlation", "<r>", 0.0, "A fragment's observed area is trusted when its extracted "
+                          "profile correlates with the precursor's by MORE than this. -1 disables the test.", false);
+    registerFlag_("intensity_no_restrict", "Replace a precursor only when EVERY one of its transitions is trusted, else keep "
+                                           "its predictions whole. Transition counts then cannot change, so a benchmark "
+                                           "difference is attributable to the values alone.");
+    registerFlag_("intensity_no_rerank", "Keep a replaced precursor's transitions in their original order.");
+    registerIntOption_("intensity_min_fragments", "<n>", 3, "A replaced precursor keeps at least this many transitions or "
+                       "keeps its predictions whole.", false);
+    registerStringOption_("intensity_norm", "<rule>", "library_max", "How an observed area becomes a library intensity. "
+                          "library_max scales to the maximum that precursor already held, which preserves the file's own "
+                          "convention -- base peak = 1 is not an invariant of these libraries.", false);
+    setValidStrings_("intensity_norm", {"library_max", "base_peak", "sum", "raw"});
+    registerDoubleOption_("intensity_mz_tol_ppm", "<ppm>", 20.0, "A fragment matches only when the report's m/z agrees with "
+                          "the library's to within this.", false);
+    registerDoubleOption_("intensity_max_mz_mismatch", "<frac>", 0.01, "Refuse when more than this fraction of identity "
+                          "matches fail the m/z check. 1 surveys a suspect pairing instead of failing.", false);
+    registerFlag_("allow_mixed_intensity", "Permit -write_intensity with -no_filter, which leaves observed and predicted "
+                                           "intensities in one library. Recorded in the provenance.");
     registerDoubleOption_("q_precursor", "<q>", 0.01, "Precursor q-value gate (>= 1 disables).", false);
     registerDoubleOption_("q_global", "<q>", 0.01, "Global/peptide q-value gate (>= 1 disables).", false);
     registerDoubleOption_("q_protein", "<q>", 0.01, "Protein q-value gate (>= 1 disables).", false);
@@ -176,6 +226,9 @@ protected:
     registerTOPPSubsection_("cohort", "Fine-tuning: protein-level cohorts (frozen before subsampling)");
     registerIntOption_("cohort:train_size", "<n>", 0, "Training units (sequences for rt, sequence x charge for ccs); 0 = full pool", false);
     registerDoubleOption_("cohort:train_frac", "<f>", 0.0, "Alternative to train_size: fraction of the pool", false);
+    registerFlag_("cohort:full_fit", "Train on EVERY unit of the run, the test and validation cohorts included: the closest "
+                                     "fit the data allows. val and TEST are then in-sample; judge this mode by searching a "
+                                     "DIFFERENT run with the result, never by its own numbers");
     registerFlag_("cohort:no_inner_val", "No inner validation cohort: its units rejoin the pool and checkpoints are selected on TEST, which is then no longer a held-out number");
 
     registerTOPPSubsection_("train", "Fine-tuning: recipe");
@@ -222,6 +275,14 @@ protected:
     get_num("q_precursor", p.q_precursor, 0.0, 1.0); get_num("q_global", p.q_global, 0.0, 1.0); get_num("q_protein", p.q_protein, 0.0, 1.0);
     get_num("im_ramp_top", p.im_ramp_top, 0.0, 10.0); get_num("im_ramp_margin", p.im_ramp_margin, 0.0, 1.0);
     get_num("min_match_fraction", p.min_match_fraction, 0.0, 1.0);
+    get_bool("intensity_restrict", p.intensity_restrict); get_bool("intensity_rerank", p.intensity_rerank);
+    get_bool("allow_mixed_intensity", p.allow_mixed_intensity);
+    get_num("intensity_min_correlation", p.intensity_min_correlation, -1.0, 1.0);
+    get_num("intensity_min_relative", p.intensity_min_relative, 0.0, 1.0);
+    get_num("intensity_mz_tol_ppm", p.intensity_mz_tol_ppm, 0.0, 1000.0);
+    get_num("intensity_max_mz_mismatch", p.intensity_max_mz_mismatch, 0.0, 1.0);
+    if (j.contains("intensity_min_fragments")) { p.intensity_min_fragments = j.at("intensity_min_fragments").get<std::size_t>(); }
+    if (j.contains("intensity_norm")) { p.intensity_norm = intensityNormFrom(j.at("intensity_norm").get<std::string>()); }
     if (j.contains("min_fragments")) { p.min_fragments = j.at("min_fragments").get<std::size_t>(); }
     if (j.contains("im_min_charge")) { p.im_min_charge = j.at("im_min_charge").get<int>(); if (p.im_min_charge < 1) { throw std::runtime_error("im_min_charge must be >= 1"); } }
     if (j.contains("rt_unit"))
@@ -251,6 +312,14 @@ protected:
     p.require_gates = !getFlag_("empirical_library");
     p.write_im = getFlag_("write_im");
     p.write_intensity = getFlag_("write_intensity");
+    p.intensity_min_correlation = getDoubleOption_("intensity_min_correlation");
+    p.intensity_restrict = !getFlag_("intensity_no_restrict");
+    p.intensity_rerank = !getFlag_("intensity_no_rerank");
+    p.intensity_min_fragments = static_cast<std::size_t>(std::max(0, getIntOption_("intensity_min_fragments")));
+    p.intensity_norm = intensityNormFrom(getStringOption_("intensity_norm"));
+    p.intensity_mz_tol_ppm = getDoubleOption_("intensity_mz_tol_ppm");
+    p.intensity_max_mz_mismatch = getDoubleOption_("intensity_max_mz_mismatch");
+    p.allow_mixed_intensity = getFlag_("allow_mixed_intensity");
     p.im_min_charge = getIntOption_("im_min_charge");
     p.im_ramp_top = getDoubleOption_("im_ramp_top");
     p.im_ramp_margin = getDoubleOption_("im_ramp_margin");
@@ -337,6 +406,7 @@ protected:
         tp.train_size = static_cast<std::size_t>(std::max(0, getIntOption_("cohort:train_size")));
         tp.train_frac = getDoubleOption_("cohort:train_frac");
         tp.inner_val = !getFlag_("cohort:no_inner_val");
+        tp.full_fit = getFlag_("cohort:full_fit");
         tp.epochs = getIntOption_("train:epochs");
         tp.warmup = getIntOption_("train:warmup");
         tp.lr = getDoubleOption_("train:lr");
@@ -418,6 +488,7 @@ protected:
                         (unpredicted ? " (" + std::to_string(unpredicted) + " could not be encoded)" : ""));
         }
 
+        tune_prov["full_fit"] = tp.full_fit;   // recorded for either head, not only when RT was tuned
         tune_prov["models_kept"] = keep.empty() ? json(nullptr) : json(fs::absolute(work).string());
         if (keep.empty()) { std::error_code ec; fs::remove_all(work, ec); }
       }
@@ -463,6 +534,28 @@ protected:
     writeLogInfo_("library " + std::to_string(st.library_before) + " -> " + std::to_string(st.library_after) +
                   " precursors (" + std::to_string(st.matched) + " targets + " + std::to_string(st.decoys_kept) + " decoys)" +
                   (p.filter ? "" : " (filter off)"));
+    if (p.write_intensity)
+    {
+      std::ostringstream r; r.setf(std::ios::fixed); r.precision(3);
+      r << "replaced fragment intensities on " << st.intensity_replaced_precursors << " of " << st.intensity_candidate_precursors
+        << " candidate precursors (" << st.intensity_kept_predicted << " kept their predictions); transitions per replaced precursor "
+        << st.intensity_transitions_before << " -> " << st.intensity_transitions_after
+        << "; observed base peak was already the library's top transition in " << 100.0 * st.intensity_rank_agreement << "%";
+      writeLogInfo_(r.str());
+      writeLogInfo_("fragment fates over " + std::to_string(st.intensity_candidate_transitions) + " candidate transitions: " +
+                    std::to_string(st.intensity_matched_transitions) + " matched (" + std::to_string(st.intensity_gated_zero_quant) +
+                    " zero area, " + std::to_string(st.intensity_gated_correlation) + " below the correlation gate, " +
+                    std::to_string(st.intensity_gated_floor) + " below the floor), " + std::to_string(st.intensity_unmatched_in_library) +
+                    " not in the report, " + std::to_string(st.intensity_mz_mismatch) + " m/z disagreements, " +
+                    std::to_string(st.intensity_loss_bearing) + " loss-bearing; " + std::to_string(st.intensity_observed_not_in_library) +
+                    " report fragments the library never carried were NOT added");
+      if (st.intensity_loss_bearing)
+      { writeLogWarn_(std::to_string(st.intensity_loss_bearing) + " neutral-loss transitions could not be matched: the report has "
+                      "no loss field. Under the default restriction they were dropped from replaced precursors."); }
+      if (!p.filter)
+      { writeLogWarn_("MIXED INTENSITY PROVENANCE: matched precursors carry this run's observed intensities, unmatched ones "
+                      "carry MS2-model predictions (-allow_mixed_intensity)."); }
+    }
     if (p.write_rt)
     {
       writeLogInfo_("NOTE: the RT column now holds the REFERENCE RUN's observed retention times (unit: " +
@@ -487,11 +580,27 @@ protected:
                    {"decoys_kept", st.decoys_kept}, {"match_fraction", st.match_fraction},
                    {"rt_written", st.rt_written}, {"rt_missing", st.rt_missing},
                    {"im_written", st.im_written}, {"im_missing", st.im_missing}, {"im_charge_excluded", st.im_charge_excluded}}},
+      {"intensity", p.write_intensity ? json{
+                   {"candidate_precursors", st.intensity_candidate_precursors}, {"replaced_precursors", st.intensity_replaced_precursors},
+                   {"replaced_decoys", st.intensity_replaced_decoys}, {"kept_predicted", st.intensity_kept_predicted},
+                   {"decoy_asymmetry", st.intensity_decoy_asymmetry}, {"duplicate_key", st.intensity_duplicate_key},
+                   {"candidate_transitions", st.intensity_candidate_transitions}, {"matched_transitions", st.intensity_matched_transitions},
+                   {"mz_mismatch", st.intensity_mz_mismatch}, {"mz_mismatch_fraction", st.intensity_mz_mismatch_fraction},
+                   {"unmatched_in_library", st.intensity_unmatched_in_library}, {"loss_bearing", st.intensity_loss_bearing},
+                   {"observed_not_in_library", st.intensity_observed_not_in_library},
+                   {"gated_zero_quant", st.intensity_gated_zero_quant}, {"gated_correlation", st.intensity_gated_correlation},
+                   {"gated_floor", st.intensity_gated_floor}, {"bad_tokens", st.intensity_bad_tokens},
+                   {"row_length_mismatch", st.intensity_row_length_mismatch},
+                   {"rank_agreement", num(st.intensity_rank_agreement)},
+                   {"transitions_before", num(st.intensity_transitions_before)}, {"transitions_after", num(st.intensity_transitions_after)},
+                   {"mixed_provenance", !p.filter}} : json(nullptr)},
       {"residual_before", {{"rt", {{"n", st.rt_resid_n}, {"mean", num(st.rt_resid_mean)}, {"sd", num(st.rt_resid_sd)}, {"p95_abs", num(st.rt_resid_p95)}}},
                            {"im", {{"n", st.im_resid_n}, {"mean", num(st.im_resid_mean)}, {"sd", num(st.im_resid_sd)}, {"p95_abs", num(st.im_resid_p95)}}},
                            {"sd_convention", "ddof=1; p95 = lower nearest-rank quantile of |residual|; NaN -> null when n<2"}}},
       {"units", {{"rt", p.write_rt ? (p.rt_unit == ODIA::RefineParams::RtUnit::MinMax ? "0..100 minmax over the matched set" : "the reference run's own RT units") : "unchanged (library prediction)"},
-                 {"im", p.write_im ? "observed 1/K0 for charges >= im_min_charge; CCS cleared where written" : "unchanged (library prediction)"}}},
+                 {"im", p.write_im ? "observed 1/K0 for charges >= im_min_charge; CCS cleared where written" : "unchanged (library prediction)"},
+                 {"intensity", p.write_intensity ? std::string("observed fragment areas from the reference run, normalised by ") + intensityNormName(p.intensity_norm) +
+                                                   (p.filter ? "" : "; UNMATCHED precursors keep MS2-model predictions") : std::string("unchanged (library prediction)")}}},
       {"warning", "Per-run object: correct for the reference run and its gradient, wrong elsewhere."}};
 
     try
